@@ -1,7 +1,8 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Race search input with auto-select best match
+- Expanded name lists across all cultures and titles
 
 ## 0.1.11
 - Race selection from compendiums with applied racial features

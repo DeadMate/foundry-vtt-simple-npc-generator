@@ -327,7 +327,8 @@ async function openNpcDialog() {
       </div>
       <div class="form-group">
         <label>Race</label>
-        <div class="form-fields">
+        <div class="form-fields" style="flex-direction: column; align-items: stretch;">
+          <input type="text" name="speciesSearch" placeholder="Search race..." style="width: 100%; max-width: 100%;" />
           <select name="species">
             <option value="random">Random</option>
             ${speciesOptions}
@@ -392,6 +393,26 @@ async function openNpcDialog() {
       if (lastSpeciesKey) {
         form.find("select[name='species']").val(lastSpeciesKey);
       }
+      const speciesSearch = form.find("input[name='speciesSearch']");
+      const speciesSelect = form.find("select[name='species']");
+      const allOptions = speciesSelect.find("option").toArray();
+      speciesSearch.on("input", () => {
+        const q = String(speciesSearch.val() || "").trim().toLowerCase();
+        speciesSelect.empty();
+        let firstMatch = null;
+        for (const opt of allOptions) {
+          const text = opt.textContent || "";
+          if (!q || text.toLowerCase().includes(q) || opt.value === "random") {
+            speciesSelect.append(opt);
+            if (!firstMatch && opt.value !== "random") firstMatch = opt;
+          }
+        }
+        if (firstMatch) {
+          speciesSelect.val(firstMatch.value);
+        } else if (!q) {
+          speciesSelect.val("random");
+        }
+      });
       const input = form.find("input[name='count']");
       const clamp = (val) => Math.max(1, Math.min(50, Number(val) || 1));
       form.find("[data-npc-count='minus']").on("click", () => {
