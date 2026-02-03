@@ -23,14 +23,14 @@ jobs:
           node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2));"
           VERSION=$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('module.json','utf8')); console.log(data.version);")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          node -e "const fs=require('fs'); const v=process.env.VERSION; const path='CHANGELOG.md'; if(!fs.existsSync(path)){fs.writeFileSync(path, '# Changelog\\n\\n## '+v+'\\n- Automated release\\n\\n'); process.exit(0);} const text=fs.readFileSync(path,'utf8'); const re=/^##\\s+([0-9]+\\.[0-9]+\\.[0-9]+)\\s*$/m; const m=text.match(re); if(!m){fs.writeFileSync(path, `# Changelog\\n\\n## ${v}\\n- Automated release\\n\\n` + text.replace(/^#\\s*Changelog\\s*\\n*/i,'')); process.exit(0);} const current=m[1]; if(current===v) process.exit(0); const updated=text.replace(re, `## ${v}`); fs.writeFileSync(path, updated);"
+          node -e "const fs=require('fs'); const v=process.env.VERSION; const path='CHANGELOG.md'; const header='# Changelog'; const stub=`## ${v}\\n- TODO: describe changes\\n\\n`; if(!fs.existsSync(path)){fs.writeFileSync(path, `${header}\\n\\n${stub}`); process.exit(0);} let text=fs.readFileSync(path,'utf8'); if(!text.trim().startsWith(header)){text=`${header}\\n\\n${text.replace(/^#\\s*Changelog\\s*\\n*/i,'')}`;} const re=new RegExp(`^##\\\\s+${v.replace(/\\./g,'\\\\.')}\\\\s*$`,'m'); if(re.test(text)) process.exit(0); const insertPos=text.indexOf('\\n'); if(insertPos<0){fs.writeFileSync(path, `${header}\\n\\n${stub}`); process.exit(0);} text=`${header}\\n\\n${stub}` + text.slice(insertPos+1).replace(/^\\s*/,''); fs.writeFileSync(path, text);"
         env:
           VERSION: ${{ steps.bump.outputs.version }}
 
       - name: Extract release notes
         id: notes
         run: |
-          node -e "const fs=require('fs'); const v=process.env.VERSION; const text=fs.readFileSync('CHANGELOG.md','utf8'); const re=new RegExp('^##\\\\s+'+v+'\\\\s*$','m'); let start=text.search(re); if(start<0){const first=text.search(/^##\\s+/m); if(first<0){throw new Error('Changelog has no version sections');} start=first;} const slice=text.slice(start); const end=slice.slice(1).search(/^##\\s+/m); const notes=(end>0?slice.slice(0,end+1):slice).trim(); fs.writeFileSync('RELEASE_NOTES.md', notes + '\\n');";
+          node -e "const fs=require('fs'); const v=process.env.VERSION; const text=fs.readFileSync('CHANGELOG.md','utf8'); const re=new RegExp('^##\\\\s+'+v+'\\\\s*$','m'); const start=text.search(re); if(start<0){throw new Error('Changelog missing version '+v);} const slice=text.slice(start); const end=slice.slice(1).search(/^##\\s+/m); const notes=(end>0?slice.slice(0,end+1):slice).trim(); fs.writeFileSync('RELEASE_NOTES.md', notes + '\\n');";
         env:
           VERSION: ${{ steps.bump.outputs.version }}
 
