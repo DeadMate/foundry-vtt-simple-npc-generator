@@ -6,6 +6,7 @@
 - Folder selection for new NPCs (remembers last used)
 - Bulk NPC generation with +/- count controls
 - Safer loot generation when tables are missing
+- Expanded names and traits; hooks rewritten for variety
 
 ## 0.1.7
 - TODO: describe changes
