@@ -1,7 +1,10 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Fix budgeted item selection stability
+- Prevent armor conflicts more reliably
+- Add race search auto-select
+- Vary ability scores so NPCs differ
 
 ## 0.1.13
 - Maintenance release prep

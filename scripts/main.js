@@ -538,7 +538,7 @@ function generateNpc(options) {
   const hook = includeHook ? pickRandom(traits.hooks) : null;
   const quirk = pickRandom(traits.quirks);
 
-  const abilities = applyTierToAbilities({ ...archetype.baseAbilities }, tier, importantNpc);
+  const abilities = applyTierToAbilities(varyBaseAbilities(archetype.baseAbilities), tier, importantNpc);
   const prime = getPrimeAbilities(abilities);
 
   const ac = Math.min(20, 11 + tier + (importantNpc ? 1 : 0));
@@ -1932,6 +1932,35 @@ function applyTierToAbilities(abilities, tier, importantNpc) {
   return abilities;
 }
 
+function varyBaseAbilities(base) {
+  const abilities = { ...base };
+  const keys = Object.keys(abilities);
+
+  // Small random jitter so NPCs aren't identical.
+  for (const key of keys) {
+    abilities[key] += randInt(-1, 1);
+  }
+
+  // Randomly shift a couple of points between stats.
+  const shifts = 2 + randInt(0, 2);
+  for (let i = 0; i < shifts; i++) {
+    const from = pickRandom(keys);
+    const to = pickRandom(keys);
+    if (from === to) continue;
+    if (abilities[from] > 6) {
+      abilities[from] -= 1;
+      abilities[to] += 1;
+    }
+  }
+
+  // Clamp to a sane range.
+  for (const key of keys) {
+    abilities[key] = Math.max(6, Math.min(18, abilities[key]));
+  }
+
+  return abilities;
+}
+
 function getPrimeAbilities(abilities) {
   return Object.entries(abilities)
     .sort((a, b) => b[1] - a[1])
@@ -2129,6 +2158,20 @@ function getRandomCachedDocByKeywords(packs, keywords, predicate) {
     return normalized.some((k) => haystack.some((h) => h.includes(k)));
   });
   return matches.length ? pickRandom(matches) : pickRandom(docs);
+}
+
+function getRandomCachedDocByKeywordsWithBudget(packs, keywords, predicate, budget, allowMagic = false) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase()).filter(Boolean);
+  let docs = getCachedDocsForPacks(packs).filter((doc) => !predicate || predicate(doc));
+  if (!docs.length) return null;
+  if (normalized.length) {
+    docs = docs.filter((doc) => {
+      const haystack = getDocSearchStrings(doc);
+      return normalized.some((k) => haystack.some((h) => h.includes(k)));
+    });
+  }
+  if (!docs.length) return null;
+  return pickByBudget(docs, budget, allowMagic, getItemPriceValue);
 }
 
 function getDocSearchStrings(doc) {
