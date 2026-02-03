@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.10
 - Enforce unreleased changelog notes before release
 
 ## 0.1.9
