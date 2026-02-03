@@ -20,9 +20,16 @@ jobs:
       - name: Bump version (patch)
         id: bump
         run: |
-          node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2)); console.log('version='+next);"
+          node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2));"
           VERSION=$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('module.json','utf8')); console.log(data.version);")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes
+        id: notes
+        run: |
+          node -e "const fs=require('fs'); const v=process.env.VERSION; const text=fs.readFileSync('CHANGELOG.md','utf8'); const re=new RegExp('^##\\s+'+v+'\\s*$','m'); const start=text.search(re); if(start<0){throw new Error('Changelog missing version '+v);} const slice=text.slice(start); const end=slice.search(/^##\s+/m); const notes=(end>0?slice.slice(0,end):slice).trim(); fs.writeFileSync('RELEASE_NOTES.md', notes + '\n');";
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
 
       - name: Commit version bump
         run: |
@@ -34,14 +41,14 @@ jobs:
 
       - name: Create module.zip
         run: |
-          zip -r module.zip module.json README.md scripts data -x "data/compendium-cache.json"
+          zip -r module.zip module.json README.md scripts data CHANGELOG.md -x "data/compendium-cache.json"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.bump.outputs.version }}
           name: v${{ steps.bump.outputs.version }}
-          body: "Automated release"
+          body_path: RELEASE_NOTES.md
           files: |
             module.json
             module.zip
