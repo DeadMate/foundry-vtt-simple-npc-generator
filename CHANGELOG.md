@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Maintenance release prep
 
 ## 0.1.12
 - Race search input with auto-select best match
