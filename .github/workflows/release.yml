@@ -1,0 +1,70 @@
+name: release
+
+on:
+  push:
+    branches: ["master"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version (patch)
+        id: bump
+        run: |
+          node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2)); console.log('version='+next);"
+          VERSION=$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('module.json','utf8')); console.log(data.version);")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add module.json
+          git commit -m "chore: bump version to v${{ steps.bump.outputs.version }} [skip ci]"
+          git push
+
+      - name: Create module.zip
+        run: |
+          zip -r module.zip module.json README.md scripts data -x "data/compendium-cache.json"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.version }}
+          name: v${{ steps.bump.outputs.version }}
+          body: "Automated release"
+          files: |
+            module.json
+            module.zip
+
+      - name: Publish to Foundry
+        env:
+          FOUNDRY_RELEASE_TOKEN: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}
+        run: |
+          curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${FOUNDRY_RELEASE_TOKEN}" \
+            -d @- <<'JSON'
+          {
+            "id": "npc-button-5e",
+            "release": {
+              "version": "${{ steps.bump.outputs.version }}",
+              "manifest": "https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases/download/v${{ steps.bump.outputs.version }}/module.json",
+              "notes": "https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases/tag/v${{ steps.bump.outputs.version }}",
+              "compatibility": {
+                "minimum": "11",
+                "verified": "13",
+                "maximum": ""
+              }
+            }
+          }
+          JSON
