@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.3
+undefined
 - Expanded NPC name lists further (more cultures, titles, and surnames)
 
 ## 0.1.2
