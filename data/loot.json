@@ -1,0 +1,38 @@
+{
+  "coins": {
+    "1": {"gp": [1, 8], "sp": [5, 25]},
+    "2": {"gp": [5, 20], "sp": [10, 40]},
+    "3": {"gp": [15, 60], "sp": [20, 80]},
+    "4": {"gp": [40, 120], "sp": [40, 150]}
+  },
+  "commonItems": [
+    "Rope (50 ft)",
+    "Torch",
+    "Rations (1 day)",
+    "Waterskin",
+    "Chalk",
+    "Crowbar",
+    "Flask of oil"
+  ],
+  "specialItems": [
+    "Potion of Healing",
+    "Antitoxin",
+    "Scroll Case with notes",
+    "Old key",
+    "Map fragment",
+    "Sealed letter"
+  ],
+  "tables": {
+    "guard": ["Manacles", "Whistle", "Badge"],
+    "bandit": ["Dagger", "Loaded dice", "Wanted poster"],
+    "acolyte": ["Holy symbol", "Prayer book", "Incense"],
+    "scholar": ["Notebook", "Ink and quill", "Lens"],
+    "merchant": ["Ledger", "Signet ring", "Small scale"],
+    "scout": ["Hunting trap", "Spyglass", "Camouflage cloak"],
+    "noble": ["Perfume", "Fine wine", "Seal"],
+    "cultist": ["Obsidian charm", "Ritual dagger", "Black wax"],
+    "mercenary": ["Whetstone", "Trophy token", "Spare ammo"],
+    "healer": ["Herbal kit", "Bandages", "Tonic"],
+    "thief": ["Lockpicks", "Gloves", "Throwing knives"]
+  }
+}

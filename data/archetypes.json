@@ -1,0 +1,101 @@
+[
+  {
+    "id": "guard",
+    "name": "Guard",
+    "tags": ["martial", "law"],
+    "baseAbilities": {"str": 13, "dex": 12, "con": 12, "int": 10, "wis": 11, "cha": 10},
+    "skills": ["ath", "prc"],
+    "attackStyle": "melee",
+    "lootTable": "guard"
+  },
+  {
+    "id": "bandit",
+    "name": "Bandit",
+    "tags": ["martial", "criminal"],
+    "baseAbilities": {"str": 11, "dex": 14, "con": 12, "int": 10, "wis": 10, "cha": 11},
+    "skills": ["ste", "slt"],
+    "attackStyle": "mixed",
+    "lootTable": "bandit"
+  },
+  {
+    "id": "acolyte",
+    "name": "Acolyte",
+    "tags": ["caster", "holy"],
+    "baseAbilities": {"str": 9, "dex": 10, "con": 11, "int": 12, "wis": 14, "cha": 11},
+    "skills": ["rel", "ins"],
+    "attackStyle": "caster",
+    "lootTable": "acolyte"
+  },
+  {
+    "id": "scholar",
+    "name": "Scholar",
+    "tags": ["caster", "knowledge"],
+    "baseAbilities": {"str": 8, "dex": 11, "con": 10, "int": 15, "wis": 12, "cha": 10},
+    "skills": ["arc", "his", "inv"],
+    "attackStyle": "caster",
+    "lootTable": "scholar"
+  },
+  {
+    "id": "merchant",
+    "name": "Merchant",
+    "tags": ["social"],
+    "baseAbilities": {"str": 9, "dex": 11, "con": 10, "int": 12, "wis": 11, "cha": 14},
+    "skills": ["per", "dec"],
+    "attackStyle": "ranged",
+    "lootTable": "merchant"
+  },
+  {
+    "id": "scout",
+    "name": "Scout",
+    "tags": ["martial", "wilderness"],
+    "baseAbilities": {"str": 11, "dex": 15, "con": 12, "int": 10, "wis": 12, "cha": 9},
+    "skills": ["sur", "prc", "ste"],
+    "attackStyle": "ranged",
+    "lootTable": "scout"
+  },
+  {
+    "id": "noble",
+    "name": "Noble",
+    "tags": ["social"],
+    "baseAbilities": {"str": 10, "dex": 11, "con": 11, "int": 12, "wis": 11, "cha": 15},
+    "skills": ["dec", "ins", "per"],
+    "attackStyle": "ranged",
+    "lootTable": "noble"
+  },
+  {
+    "id": "cultist",
+    "name": "Cultist",
+    "tags": ["caster", "dark"],
+    "baseAbilities": {"str": 9, "dex": 12, "con": 11, "int": 11, "wis": 13, "cha": 12},
+    "skills": ["rel", "dec"],
+    "attackStyle": "caster",
+    "lootTable": "cultist"
+  },
+  {
+    "id": "mercenary",
+    "name": "Mercenary",
+    "tags": ["martial"],
+    "baseAbilities": {"str": 14, "dex": 12, "con": 13, "int": 9, "wis": 11, "cha": 10},
+    "skills": ["ath", "itm"],
+    "attackStyle": "melee",
+    "lootTable": "mercenary"
+  },
+  {
+    "id": "healer",
+    "name": "Healer",
+    "tags": ["holy", "caster"],
+    "baseAbilities": {"str": 9, "dex": 11, "con": 12, "int": 11, "wis": 15, "cha": 10},
+    "skills": ["med", "ins"],
+    "attackStyle": "caster",
+    "lootTable": "healer"
+  },
+  {
+    "id": "thief",
+    "name": "Thief",
+    "tags": ["criminal"],
+    "baseAbilities": {"str": 9, "dex": 15, "con": 11, "int": 12, "wis": 10, "cha": 12},
+    "skills": ["ste", "slt", "acr"],
+    "attackStyle": "mixed",
+    "lootTable": "thief"
+  }
+]

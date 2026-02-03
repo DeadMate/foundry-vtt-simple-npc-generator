@@ -1,0 +1,6 @@
+# Generated cache
+/data/compendium-cache.json
+
+# OS
+.DS_Store
+Thumbs.db

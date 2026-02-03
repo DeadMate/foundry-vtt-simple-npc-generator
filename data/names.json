@@ -1,0 +1,64 @@
+{
+  "cultures": {
+    "common": [
+      "Alden", "Mira", "Thorin", "Elara", "Garrick", "Lyra", "Rowan", "Tessa", "Bram", "Nessa", "Cedric", "Iris",
+      "Alaric", "Anya", "Bastian", "Bela", "Corin", "Daria", "Edric", "Faye", "Galen", "Helena", "Ivo", "Jessa",
+      "Kael", "Lena", "Marcus", "Mara", "Nolan", "Orin", "Perrin", "Quinn", "Ronan", "Sable", "Tarin", "Vera",
+      "Wes", "Yara", "Zorin", "Celine", "Damon", "Evelyn", "Arin", "Bran", "Cora", "Dain", "Edda", "Fenn",
+      "Gwen", "Hal", "Ida", "Jory", "Kara", "Lyle", "Mila", "Nate", "Owen", "Pia", "Rafe", "Sera",
+      "Troy", "Una", "Vance", "Willa", "Yven", "Zara", "Ari", "Beck", "Calla", "Drew", "Evan", "Fia",
+      "Gage", "Hera", "Isla", "Jude", "Keen", "Lara", "Marek", "Nia", "Orr", "Pax", "Rey", "Sian",
+      "Tess", "Vale", "Wren", "Zeke", "Adel", "Briar", "Cyr", "Della", "Eamon", "Faris", "Greta", "Hale",
+      "Ilia", "Jax", "Kira", "Liora", "Merek", "Nikol", "Orla", "Perr", "Rika", "Soren", "Talia", "Vika"
+    ],
+    "nordic": [
+      "Asgeir", "Brynja", "Eirik", "Hilda", "Kjell", "Sigrid",
+      "Arvid", "Astrid", "Bjorn", "Dagny", "Eydis", "Freya", "Gunnar", "Gudrun",
+      "Hakon", "Idun", "Inga", "Leif", "Ragnor", "Runa", "Soren", "Torin", "Ulf", "Yrsa",
+      "Erik", "Svala", "Kari", "Sif", "Sten", "Rurik", "Skadi", "Ivar", "Helga", "Njal",
+      "Liv", "Rolf", "Birgit", "Odin", "Rune", "Thyra", "Sigurd", "Frode", "Knut", "Solveig",
+      "Hild", "Eira", "Eystein", "Hrafn", "Jorun", "Kelda", "Magne", "Oskar", "Ragna", "Torild"
+    ],
+    "desert": [
+      "Azim", "Farah", "Jalil", "Nadia", "Rashad", "Zara",
+      "Amir", "Basma", "Dari", "Emir", "Hakim", "Jasira", "Khalid", "Laila",
+      "Malik", "Nadir", "Qadir", "Rania", "Samir", "Tariq", "Yasir", "Zahra",
+      "Adnan", "Bilal", "Dalia", "Faris", "Ghalib", "Hadi", "Iman", "Jamal",
+      "Karim", "Latif", "Muna", "Naseem", "Omar", "Pari", "Qasim", "Rafi",
+      "Salim", "Talia", "Umar", "Wadi", "Yumna", "Zaki", "Zulema", "Amal", "Hanan", "Saif"
+    ],
+    "eastern": [
+      "Hiro", "Kana", "Ren", "Sora", "Takao", "Yumi",
+      "Akira", "Ami", "Daichi", "Emi", "Hana", "Isamu", "Jun", "Kaori",
+      "Kenji", "Mai", "Min", "Nori", "Riku", "Shin", "Taiga", "Yori",
+      "Aiko", "Chiyo", "Daisuke", "Eiko", "Fumi", "Gen", "Haruto", "Itsu",
+      "Junko", "Kaito", "Mei", "Naoki", "Renji", "Sachi", "Tomo", "Yuki",
+      "Zan", "Kiyu", "Rina", "Suzu", "Hoshi", "Taro", "Miko", "Sada", "Tetsu", "Yuta"
+    ],
+    "wild": [
+      "Kara", "Rook", "Shade", "Vera", "Jett", "Fenn",
+      "Ash", "Briar", "Cade", "Dusk", "Eryn", "Fox", "Gale", "Harper",
+      "Indra", "Kest", "Lark", "Moss", "Nyx", "Oak", "Pike", "Reed", "Sage", "Thorn",
+      "Aster", "Bracken", "Cinder", "Drift", "Echo", "Fable", "Grit", "Hawk",
+      "Ivory", "Jasper", "Kite", "Lumen", "Mara", "Nox", "Onyx", "Pyre",
+      "Quill", "Rift", "Rune", "Skye", "Talon", "Vale", "Wisp", "Zeph"
+    ]
+  },
+  "surnames": [
+    "Ashford", "Blackwood", "Dawnstar", "Ironvale", "Kestrel", "Ravenfall", "Stonebridge", "Thorne", "Windrow", "Wyrn",
+    "Amberton", "Barrow", "Brightwell", "Caskbow", "Coldwater", "Crowley", "Duskfall", "Evers", "Fairchild", "Fletcher",
+    "Glimmer", "Graymark", "Hawthorne", "Holloway", "Irongate", "Kingsley", "Larkspur", "Merrin", "Northwind", "Oakheart",
+    "Penrose", "Quickfoot", "Rivermore", "Silverton", "Storme", "Thistledown", "Valewood", "Westmere", "Whitlock", "Wyther",
+    "Aldermere", "Briarfield", "Clearwater", "Duskmire", "Elderwood", "Frostborne", "Gildcrest", "Hearthwell", "Ironmark", "Jadebrook",
+    "Keenridge", "Lightmore", "Moonfall", "Nightsong", "Oakenford", "Pikehill", "Quillstone", "Redwater", "Sableford", "Tidewell",
+    "Umber", "Vane", "Whitehill", "Yew", "Zephyr", "Arroway", "Briarstone", "Cinderholt", "Dovetail", "Evermere",
+    "Fallow", "Grimsby", "Harrow", "Isen", "Jarl", "Korrin", "Locke", "Mourn", "Norvale", "Oakley",
+    "Pinehurst", "Quarry", "Rook", "Seaborn", "Thornfield", "Umberley", "Valcrest", "Windmere", "Yarrow", "Zale"
+  ],
+  "titles": [
+    "Ser", "Captain", "Master", "Sister", "Brother", "Mistress", "Scholar", "Warden", "Judge", "Keeper",
+    "Sir", "Lady", "Dame", "Marshal", "Provost", "Magister", "Prelate", "Seeker", "Sentinel", "Steward",
+    "Baron", "Baroness", "Count", "Countess", "Duke", "Duchess", "Elder", "High Priest", "Archivist", "Ranger",
+    "Commander", "Guildmaster", "Artificer", "Admiral", "Chancellor", "Justiciar", "Inquisitor", "Knight", "Vicar", "Inspector"
+  ]
+}

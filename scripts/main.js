@@ -1,0 +1,1432 @@
+const MODULE_ID = "npc-button-5e";
+const DATA_CACHE = { loaded: false };
+const COMPENDIUM_CACHE_FILE = "compendium-cache";
+const USE_COMPENDIUM_CACHE = true;
+const CACHE_DOC_TYPES = new Set(["weapon", "equipment", "loot", "consumable", "feat", "spell"]);
+const COMPENDIUMS = {
+  weapons: ["dnd5e.items", "dnd5e.equipment24"],
+  loot: ["dnd5e.tradegoods", "dnd5e.items", "dnd5e.equipment24"],
+  spells: ["dnd5e.spells", "dnd5e.spells24"],
+  features: ["dnd5e.monsterfeatures", "dnd5e.monsterfeatures24", "dnd5e.classfeatures", "dnd5e.classfeatures24"],
+  classFeatures: ["dnd5e.classfeatures", "dnd5e.classfeatures24"]
+};
+
+function getPacks(kind) {
+  return DATA_CACHE.compendiumLists?.[kind]?.length
+    ? DATA_CACHE.compendiumLists[kind]
+    : COMPENDIUMS[kind];
+}
+
+Hooks.once("init", () => {
+});
+
+Hooks.once("ready", () => {
+  if (game.system?.id !== "dnd5e") {
+    ui.notifications?.warn("NPC Button (D&D 5e) is designed for the dnd5e system.");
+  }
+});
+
+Hooks.on("renderActorDirectory", (app, html) => {
+  addNpcButton(html);
+});
+
+Hooks.on("renderSidebarTab", (app, html) => {
+  const isActorsTab =
+    app?.options?.id === "actors" ||
+    app?.tabName === "actors" ||
+    app?.tab?.id === "actors";
+  if (!isActorsTab) return;
+  addNpcButton(html);
+});
+
+function addNpcButton(html) {
+  const $html = html instanceof HTMLElement ? $(html) : html;
+  const selectors = [
+    ".directory-header .header-actions",
+    ".directory-header .action-buttons",
+    ".directory-header .controls",
+    ".directory-header .action-buttons.flexrow",
+    ".directory-header .action-buttons .actions"
+  ];
+
+  let headerActions = null;
+  for (const selector of selectors) {
+    const found = $html.find(selector).first();
+    if (found.length) {
+      headerActions = found;
+      break;
+    }
+  }
+
+  const existing = $html.find(`[data-${MODULE_ID}='create']`);
+  if (existing.length) return;
+
+  const button = $(
+    `<button type="button" class="create-entity" data-${MODULE_ID}="create">
+      <i class="fas fa-user-plus"></i> NPC Button
+    </button>`
+  );
+
+  button.on("click", () => openNpcDialog());
+
+  if (headerActions) {
+    headerActions.append(button);
+    return;
+  }
+
+  const createButton = $html.find(
+    ".directory-header button[data-action='create'], .directory-header button.create-entity"
+  ).first();
+
+  if (createButton.length) {
+    createButton.after(button);
+    return;
+  }
+}
+
+async function openNpcDialog() {
+  if (game.system?.id !== "dnd5e") {
+    ui.notifications?.error("NPC Button requires the D&D 5e system.");
+    return;
+  }
+
+  await loadData();
+
+  const archetypes = DATA_CACHE.archetypes;
+  const options = archetypes
+    .map((a) => `<option value="${a.id}">${a.name}</option>`)
+    .join("");
+
+  const content = `
+    <form>
+      <div class="form-group">
+        <label>Archetype</label>
+        <div class="form-fields">
+          <select name="archetype">
+            <option value="random">Random</option>
+            ${options}
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Difficulty (Tier)</label>
+        <div class="form-fields">
+          <select name="tier">
+            <option value="auto">Auto (party level)</option>
+            <option value="1">T1 (CR 1/8 - 1/2)</option>
+            <option value="2">T2 (CR 1 - 3)</option>
+            <option value="3">T3 (CR 4 - 6)</option>
+            <option value="4">T4 (CR 7 - 10)</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Culture</label>
+        <div class="form-fields">
+          <select name="culture">
+            <option value="random">Random</option>
+            ${Object.keys(DATA_CACHE.names.cultures)
+              .map((k) => `<option value="${k}">${capitalize(k)}</option>`)
+              .join("")}
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Options</label>
+        <div class="form-fields" style="flex-direction: column; align-items: flex-start;">
+          <label class="checkbox"><input type="checkbox" name="includeLoot" checked> Loot</label>
+          <label class="checkbox"><input type="checkbox" name="includeSecret" checked> Secret</label>
+          <label class="checkbox"><input type="checkbox" name="includeHook" checked> Quest hook</label>
+          <label class="checkbox"><input type="checkbox" name="importantNpc"> Important NPC</label>
+        </div>
+      </div>
+    </form>
+  `;
+
+  new Dialog({
+    title: "NPC Button (D&D 5e)",
+    content,
+    buttons: {
+      cache: {
+        label: "Build Compendium Cache",
+        callback: async () => {
+          await buildCompendiumCache();
+        }
+      },
+      create: {
+        label: "Create NPC",
+        callback: async (html) => {
+          const form = html.find("form")[0];
+          const formData = new FormData(form);
+          await createNpcFromForm(formData);
+        }
+      },
+      cancel: { label: "Cancel" }
+    },
+    default: "create"
+  }).render(true);
+}
+
+async function createNpcFromForm(formData) {
+  await loadData();
+
+  const tierInput = formData.get("tier");
+  const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
+  const cultureInput = formData.get("culture");
+  const archetypeInput = formData.get("archetype");
+  const includeLoot = formData.get("includeLoot") === "on";
+  const includeSecret = formData.get("includeSecret") === "on";
+  const includeHook = formData.get("includeHook") === "on";
+  const importantNpc = formData.get("importantNpc") === "on";
+
+  const archetype =
+    archetypeInput === "random"
+      ? pickRandom(DATA_CACHE.archetypes)
+      : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
+
+  const culture =
+    cultureInput === "random"
+      ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
+      : cultureInput;
+
+  const generated = generateNpc({
+    tier,
+    archetype,
+    culture,
+    includeLoot,
+    includeSecret,
+    includeHook,
+    importantNpc
+  });
+
+  const actorData = await buildActorData(generated);
+
+  await Actor.create(actorData);
+  ui.notifications?.info(`Created NPC: ${generated.name}`);
+}
+
+function generateNpc(options) {
+  const { tier, archetype, culture, includeLoot, includeSecret, includeHook, importantNpc } = options;
+  const names = DATA_CACHE.names;
+  const traits = DATA_CACHE.traits;
+
+  const firstName = pickRandom(names.cultures[culture]);
+  const surname = chance(0.6) ? pickRandom(names.surnames) : "";
+  const title = importantNpc && chance(0.4) ? pickRandom(names.titles) : "";
+
+  const name = [title, firstName, surname].filter(Boolean).join(" ");
+
+  const appearance = pickRandomN(traits.appearance, 2 + randInt(0, 2));
+  const speech = pickRandom(traits.speech);
+  const motivation = pickRandom(traits.motivations);
+  const secret = includeSecret ? pickRandom(traits.secrets) : null;
+  const hook = includeHook ? pickRandom(traits.hooks) : null;
+  const quirk = pickRandom(traits.quirks);
+
+  const abilities = applyTierToAbilities({ ...archetype.baseAbilities }, tier, importantNpc);
+  const prime = getPrimeAbilities(abilities);
+
+  const ac = Math.min(20, 11 + tier + (importantNpc ? 1 : 0));
+  const hp = Math.max(6, 8 + tier * 8 + randInt(0, tier * 6) + (importantNpc ? 6 : 0));
+  const speed = 30;
+
+  const prof = getProfBonus(tier);
+  const cr = rollCrByTier(tier);
+
+  const loot = includeLoot ? buildLoot(archetype, tier) : null;
+
+  return {
+    name,
+    archetype,
+    tier,
+    cr,
+    prof,
+    ac,
+    hp,
+    speed,
+    abilities,
+    prime,
+    appearance,
+    speech,
+    motivation,
+    secret,
+    hook,
+    quirk,
+    loot,
+    includeLoot,
+    includeSecret,
+    includeHook,
+    importantNpc
+  };
+}
+
+async function buildActorData(npc) {
+  const tokenImg = "icons/svg/mystery-man.svg";
+
+  const biography = buildBiography(npc);
+  const alignment = pickRandom([
+    "Lawful Good",
+    "Neutral Good",
+    "Chaotic Good",
+    "Lawful Neutral",
+    "Neutral",
+    "Chaotic Neutral",
+    "Lawful Evil",
+    "Neutral Evil",
+    "Chaotic Evil"
+  ]);
+
+  const abilityData = {};
+  for (const [key, value] of Object.entries(npc.abilities)) {
+    abilityData[key] = { value };
+  }
+
+  const skillsData = buildSkillsData(npc.archetype.skills);
+
+  const items = [];
+  items.push(await buildWeaponItem(npc));
+  items.push(...(await buildRoleAbilityItems(npc)));
+  items.push(...(await buildRoleItems(npc)));
+
+  if (npc.loot) {
+    const lootItems = [];
+    for (const name of npc.loot.items) {
+      lootItems.push(await buildLootItem(name));
+    }
+    items.push(...lootItems);
+  }
+
+  const actorData = {
+    name: npc.name,
+    type: "npc",
+    img: tokenImg,
+    prototypeToken: {
+      name: npc.name,
+      img: tokenImg,
+      displayName: 20,
+      disposition: 0
+    },
+    system: {
+      abilities: abilityData,
+      skills: skillsData,
+      attributes: {
+        ac: { value: npc.ac },
+        hp: { value: npc.hp, max: npc.hp, temp: 0 },
+        movement: { walk: npc.speed },
+        prof: npc.prof
+      },
+      details: {
+        cr: npc.cr,
+        alignment,
+        type: { value: "humanoid", subtype: "" },
+        biography: { value: biography }
+      },
+      traits: {
+        size: "med",
+        languages: { value: [] }
+      },
+      currency: npc.loot ? npc.loot.coins : { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 }
+    },
+    items
+  };
+
+  return actorData;
+}
+
+function buildBiography(npc) {
+  const lines = [];
+  lines.push(`<p><strong>Role:</strong> ${npc.archetype.name} (Tier ${npc.tier}, CR ${npc.cr})</p>`);
+  lines.push(`<p><strong>Appearance:</strong> ${npc.appearance.join(", ")}</p>`);
+  lines.push(`<p><strong>Speech:</strong> ${npc.speech}</p>`);
+  lines.push(`<p><strong>Motivation:</strong> ${npc.motivation}</p>`);
+  if (npc.secret) lines.push(`<p><strong>Secret:</strong> ${npc.secret}</p>`);
+  if (npc.hook) lines.push(`<p><strong>Hook:</strong> ${npc.hook}</p>`);
+  lines.push(`<p><strong>Quirk:</strong> ${npc.quirk}</p>`);
+  return lines.join("\n");
+}
+
+function buildSkillsData(skillIds) {
+  const data = {};
+  const skillConfig = CONFIG?.DND5E?.skills ?? {};
+  for (const key of Object.keys(skillConfig)) {
+    data[key] = { value: 0 };
+  }
+  skillIds.forEach((skill) => {
+    if (data[skill]) data[skill].value = 1;
+  });
+  return data;
+}
+
+async function buildWeaponItem(npc) {
+  const style = npc.archetype.attackStyle;
+  const tags = npc.archetype.tags || [];
+  const className = getClassForArchetype(npc.archetype);
+  const weaponKeywords = getWeaponKeywords(style, tags).concat(getClassWeaponKeywords(className));
+  const weaponPacks = getPacks("weapons");
+  const compendiumWeapon =
+    (await getRandomItemByKeywords(
+      weaponPacks,
+      weaponKeywords,
+      (entry) =>
+        (entry.type === "weapon" || entry.type === "equipment") && isAllowedItemEntry(entry)
+    )) ||
+    (await getRandomItemFromPacks(
+      weaponPacks,
+      (entry) => entry.type === "weapon" && isAllowedItemEntry(entry)
+    ));
+
+  if (compendiumWeapon) {
+    const weaponData = cloneItemData(toItemData(compendiumWeapon));
+    if (weaponData.system?.equipped !== undefined) weaponData.system.equipped = true;
+    if (weaponData.system?.proficient !== undefined) weaponData.system.proficient = true;
+    return weaponData;
+  }
+
+  const cachedWeapon =
+    getRandomCachedDocByKeywords(
+      weaponPacks,
+      weaponKeywords,
+      (doc) => (doc.type === "weapon" || doc.type === "equipment") && isAllowedItemDoc(doc)
+    ) ||
+    getRandomCachedDocByKeywords(
+      weaponPacks,
+      [],
+      (doc) => doc.type === "weapon" && isAllowedItemDoc(doc)
+    );
+
+  if (cachedWeapon) {
+    const weaponData = cloneItemData(cachedWeapon);
+    if (weaponData.system?.equipped !== undefined) weaponData.system.equipped = true;
+    if (weaponData.system?.proficient !== undefined) weaponData.system.proficient = true;
+    return weaponData;
+  }
+
+  const weapon = getWeaponByStyle(style);
+  const ability = weapon.ability;
+  const damage = getDamageByTier(npc.tier, weapon.base);
+
+  return {
+    name: weapon.name,
+    type: "weapon",
+    system: {
+      actionType: weapon.actionType,
+      ability,
+      equipped: true,
+      proficient: true,
+      damage: { parts: [[damage, weapon.damageType]] },
+      range: weapon.range,
+      properties: {}
+    }
+  };
+}
+
+async function buildRoleAbilityItems(npc) {
+  const tags = npc.archetype.tags || [];
+  const isCaster = tags.includes("caster");
+  const out = [];
+  if (isCaster) {
+    out.push(...(await buildSpellItems(npc)));
+  }
+  out.push(...(await buildClassFeatureItems(npc)));
+  if (out.length) return out;
+  return buildFeatureItems(npc);
+}
+
+async function buildLootItem(name) {
+  const lootPacks = getPacks("loot");
+  const byName = await getItemByNameFromPacks(lootPacks, name);
+  if (byName && isAllowedItemDoc(byName)) {
+    const lootData = cloneItemData(toItemData(byName));
+    if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
+    return lootData;
+  }
+
+  const cachedByName = getCachedDocByName(lootPacks, name);
+  if (cachedByName && isAllowedItemDoc(cachedByName)) {
+    const lootData = cloneItemData(cachedByName);
+    if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
+    return lootData;
+  }
+
+  const compendiumLoot = await getRandomItemFromPacks(
+    lootPacks,
+    (entry) =>
+      (entry.type === "loot" || entry.type === "consumable" || entry.type === "equipment") &&
+      isAllowedItemEntry(entry)
+  );
+
+  if (compendiumLoot) {
+    const lootData = cloneItemData(toItemData(compendiumLoot));
+    if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
+    return lootData;
+  }
+
+  const cachedLoot =
+    getRandomCachedDocByKeywords(
+      lootPacks,
+      [name],
+      (doc) =>
+        (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
+        isAllowedItemDoc(doc)
+    ) ||
+    getRandomCachedDocByKeywords(
+      lootPacks,
+      [],
+      (doc) =>
+        (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
+        isAllowedItemDoc(doc)
+    );
+
+  if (cachedLoot) {
+    const lootData = cloneItemData(cachedLoot);
+    if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
+    return lootData;
+  }
+
+  const isPotion = name.toLowerCase().includes("potion");
+  return {
+    name,
+    type: isPotion ? "consumable" : "loot",
+    system: {
+      quantity: 1,
+      description: { value: "" },
+      consumableType: isPotion ? "potion" : "" 
+    }
+  };
+}
+
+function buildLoot(archetype, tier) {
+  const lootData = DATA_CACHE.loot;
+  const coinRange = lootData.coins[String(tier)];
+
+  const coins = {
+    pp: 0,
+    gp: randInt(coinRange.gp[0], coinRange.gp[1]),
+    ep: 0,
+    sp: randInt(coinRange.sp[0], coinRange.sp[1]),
+    cp: randInt(0, 10)
+  };
+
+  const items = [];
+  items.push(pickRandom(lootData.commonItems));
+  if (chance(0.6)) items.push(pickRandom(lootData.tables[archetype.lootTable]));
+  if (tier >= 2 && chance(0.4)) items.push(pickRandom(lootData.specialItems));
+
+  return { coins, items };
+}
+
+async function getRandomItemFromPacks(packs, predicate) {
+  for (const packName of packs) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+
+    const index = await getPackIndex(pack, ["type", "name", "system.rarity"]);
+    const candidates = index.filter(predicate);
+    if (!candidates.length) continue;
+
+    const entry = pickRandom(candidates);
+    const cached = getCachedDoc(pack.collection, entry._id);
+    if (cached) return cached;
+    return pack.getDocument(entry._id);
+  }
+  return null;
+}
+
+async function getRandomItemByKeywords(packs, keywords, predicate) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  for (const packName of packs) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+
+    const index = await getPackIndex(pack, ["type", "name", "system.rarity"]);
+    const candidates = index.filter((entry) => {
+      if (predicate && !predicate(entry)) return false;
+      if (!normalized.length) return true;
+      const haystack = getEntrySearchStrings(entry);
+      return normalized.some((k) => haystack.some((h) => h.includes(k)));
+    });
+    if (!candidates.length) continue;
+
+    const entry = pickRandom(candidates);
+    const cached = getCachedDoc(pack.collection, entry._id);
+    if (cached) return cached;
+    return pack.getDocument(entry._id);
+  }
+  return null;
+}
+
+async function getItemByNameFromPacks(packs, name) {
+  const target = String(name || "").trim().toLowerCase();
+  if (!target) return null;
+
+  for (const packName of packs) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+
+    const index = await getPackIndex(pack, ["type", "name", "system.rarity"]);
+    const match = index.find((entry) => {
+      const haystack = getEntrySearchStrings(entry);
+      return haystack.includes(target);
+    });
+    if (!match) continue;
+
+    const cached = getCachedDoc(pack.collection, match._id);
+    if (cached) return cached;
+    return pack.getDocument(match._id);
+  }
+
+  return null;
+}
+
+async function getPackIndex(pack, fields = ["type", "name"]) {
+  if (!DATA_CACHE.packIndex) DATA_CACHE.packIndex = new Map();
+  const key = `${pack.collection}|${fields.join(",")}`;
+  if (DATA_CACHE.packIndex.has(key)) {
+    return DATA_CACHE.packIndex.get(key);
+  }
+
+  const cached = getCachedPackIndex(pack);
+  if (cached) {
+    DATA_CACHE.packIndex.set(key, cached);
+    return cached;
+  }
+
+  if (USE_COMPENDIUM_CACHE && DATA_CACHE.compendiumCache) {
+    DATA_CACHE.packIndex.set(key, []);
+    warnMissingCacheOnce(pack.collection);
+    return [];
+  }
+
+  const index = await pack.getIndex({ fields });
+  DATA_CACHE.packIndex.set(key, index);
+  return index;
+}
+
+async function buildSpellItems(npc) {
+  const tags = npc.archetype.tags || [];
+  const maxLevel = getMaxSpellLevelByTier(npc.tier);
+  const count = getSpellCountByTier(npc.tier, npc.importantNpc);
+  const keywords = getSpellKeywords(tags);
+
+  const candidates = await getSpellCandidates(maxLevel, keywords);
+  const chosen = pickRandomN(candidates, count);
+  const out = [];
+  for (const entry of chosen) {
+    const cached = getCachedDoc(entry.pack, entry._id);
+    if (cached) {
+      out.push(cloneItemData(cached));
+      continue;
+    }
+    const pack = game.packs?.get(entry.pack);
+    if (!pack) continue;
+    const doc = await pack.getDocument(entry._id);
+    if (doc) out.push(doc.toObject());
+  }
+  if (out.length) return out;
+  return buildCachedSpellItemsFallback(maxLevel, keywords, count);
+}
+
+async function getSpellCandidates(maxLevel, keywords) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  const matches = [];
+  const fallback = [];
+
+  for (const packName of getPacks("spells")) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+    const index = await getPackIndex(pack, ["type", "name", "system.level"]);
+    for (const entry of index) {
+      if (entry.type !== "spell") continue;
+      const level = Number(entry.system?.level ?? 0);
+      if (!Number.isFinite(level) || level > maxLevel) continue;
+      const haystack = getEntrySearchStrings(entry);
+      const record = { ...entry, pack: pack.collection };
+      if (normalized.length && normalized.some((k) => haystack.some((h) => h.includes(k)))) {
+        matches.push(record);
+      } else {
+        fallback.push(record);
+      }
+    }
+  }
+
+  return matches.length ? matches : fallback;
+}
+
+async function buildFeatureItems(npc) {
+  const tags = npc.archetype.tags || [];
+  const count = npc.importantNpc ? 2 : 1;
+  const keywords = getFeatureKeywords(tags, npc.archetype.attackStyle);
+  const out = [];
+
+  for (let i = 0; i < count; i++) {
+    const feature =
+      (await getRandomItemByKeywords(
+        getPacks("features"),
+        keywords,
+        (entry) => entry.type === "feat"
+      )) || (await getRandomItemFromPacks(getPacks("features"), (entry) => entry.type === "feat"));
+
+    if (feature) out.push(cloneItemData(toItemData(feature)));
+  }
+
+  if (out.length) return out;
+  const cachedFeature = getRandomCachedDocByKeywords(
+    getPacks("features"),
+    keywords,
+    (doc) => doc.type === "feat"
+  );
+  if (cachedFeature) return [ensureActivities(cloneItemData(cachedFeature))];
+  return out;
+}
+
+async function buildRoleItems(npc) {
+  const tags = npc.archetype.tags || [];
+  const style = npc.archetype.attackStyle;
+  const out = [];
+
+  const armor = await getArmorItemByStyle(style, tags);
+  if (armor) out.push(cloneItemData(toItemData(armor)));
+  if (!armor) {
+    const cachedArmor = getRandomCachedDocByKeywords(
+      getPacks("weapons").concat(getPacks("loot")),
+      ["armor", "shield", "mail", "leather"],
+      (doc) => (doc.type === "equipment" || doc.type === "armor") && isAllowedItemDoc(doc)
+    );
+    if (cachedArmor) out.push(cloneItemData(cachedArmor));
+  }
+
+  const className = getClassForArchetype(npc.archetype);
+  const equipmentKeywords = getClassEquipmentKeywords(className);
+  if (style === "melee") equipmentKeywords.push("armor", "shield", "chain", "leather", "mail");
+  if (style === "ranged") equipmentKeywords.push("quiver", "arrows", "bolts");
+  if (style === "mixed") equipmentKeywords.push("dagger", "shortsword", "leather");
+  if (style === "caster") equipmentKeywords.push("focus", "component", "spellbook", "staff");
+
+  if (tags.includes("criminal")) equipmentKeywords.push("thieves' tools", "lockpick", "dagger");
+  if (tags.includes("wilderness")) equipmentKeywords.push("explorer", "rope", "cloak", "rations");
+  if (tags.includes("social")) equipmentKeywords.push("fine clothes", "signet", "perfume");
+  if (tags.includes("holy")) equipmentKeywords.push("holy", "symbol", "prayer");
+  if (tags.includes("dark")) equipmentKeywords.push("hood", "poison");
+
+  const picked = await getRandomItemByKeywords(
+    getPacks("weapons").concat(getPacks("loot")),
+    equipmentKeywords,
+    (entry) =>
+      (entry.type === "equipment" || entry.type === "loot" || entry.type === "consumable") &&
+      isAllowedItemEntry(entry)
+  );
+
+  if (picked) out.push(cloneItemData(toItemData(picked)));
+  if (!picked) {
+    const cachedPicked = getRandomCachedDocByKeywords(
+      getPacks("weapons").concat(getPacks("loot")),
+      equipmentKeywords,
+      (doc) =>
+        (doc.type === "equipment" || doc.type === "loot" || doc.type === "consumable") &&
+        isAllowedItemDoc(doc)
+    );
+    if (cachedPicked) out.push(cloneItemData(cachedPicked));
+  }
+
+  return out;
+}
+
+function getWeaponKeywords(style, tags) {
+  if (tags.includes("criminal")) {
+    return ["dagger", "shortsword", "rapier", "hand crossbow", "shortbow"];
+  }
+  if (style === "ranged") return ["shortbow", "longbow", "crossbow", "sling"];
+  if (style === "caster") return ["staff", "dagger", "wand"];
+  if (style === "mixed") return ["dagger", "shortsword", "handaxe", "rapier"];
+  return ["sword", "axe", "mace", "spear"];
+}
+
+function getSpellCountByTier(tier, importantNpc) {
+  const base = tier <= 1 ? 2 : tier === 2 ? 3 : tier === 3 ? 4 : 5;
+  return importantNpc ? base + 1 : base;
+}
+
+function getMaxSpellLevelByTier(tier) {
+  if (tier <= 1) return 1;
+  if (tier === 2) return 2;
+  if (tier === 3) return 3;
+  return 4;
+}
+
+function getSpellKeywords(tags) {
+  const keywords = [];
+  if (tags.includes("holy")) keywords.push("cure", "healing", "bless", "sanctuary", "guiding", "restoration", "ward");
+  if (tags.includes("dark")) keywords.push("necrotic", "hex", "curse", "blight", "shadow", "fear");
+  if (tags.includes("knowledge")) keywords.push("detect", "identify", "divination", "locate", "comprehend", "illusion");
+  if (tags.includes("wilderness")) keywords.push("entangle", "thorn", "beast", "hunter", "wind", "ice");
+  if (tags.includes("social")) keywords.push("charm", "friends", "command", "suggestion", "calm", "heroism");
+  return keywords;
+}
+
+function getFeatureKeywords(tags, attackStyle) {
+  const keywords = ["attack", "strike", "parry", "brute", "multiattack", "aggressive"];
+  if (attackStyle === "ranged") keywords.push("archery", "aim", "sharpshooter", "sniper");
+  if (attackStyle === "melee") keywords.push("cleave", "riposte", "grapple", "shield");
+  if (tags.includes("criminal")) keywords.push("sneak", "backstab", "poison", "ambush", "evasion");
+  if (tags.includes("wilderness")) keywords.push("hunter", "tracker", "skirmisher", "camouflage", "beast");
+  if (tags.includes("law")) keywords.push("guard", "sentinel", "defense");
+  return keywords;
+}
+
+function getClassForArchetype(archetype) {
+  const tags = archetype.tags || [];
+  if (tags.includes("holy")) return "Cleric";
+  if (tags.includes("dark")) return "Warlock";
+  if (tags.includes("knowledge")) return "Wizard";
+  if (tags.includes("wilderness")) return "Ranger";
+  if (tags.includes("criminal")) return "Rogue";
+  if (tags.includes("martial")) return "Fighter";
+  if (tags.includes("social")) return "Bard";
+  if (tags.includes("caster")) return "Wizard";
+  return "Fighter";
+}
+
+function getClassWeaponKeywords(className) {
+  switch (className) {
+    case "Rogue":
+      return ["dagger", "shortsword", "rapier", "hand crossbow", "shortbow"];
+    case "Cleric":
+      return ["mace", "warhammer", "flail", "staff", "shield"];
+    case "Wizard":
+      return ["staff", "dagger", "wand"];
+    case "Warlock":
+      return ["rod", "wand", "dagger", "staff"];
+    case "Ranger":
+      return ["shortbow", "longbow", "scimitar", "shortsword"];
+    case "Bard":
+      return ["rapier", "shortsword", "dagger", "hand crossbow", "whip"];
+    default:
+      return ["sword", "axe", "mace", "spear"];
+  }
+}
+
+function getClassEquipmentKeywords(className) {
+  switch (className) {
+    case "Rogue":
+      return ["leather", "studded", "thieves' tools", "cloak"];
+    case "Cleric":
+      return ["holy", "symbol", "chain", "scale", "shield", "mace"];
+    case "Wizard":
+      return ["spellbook", "component", "focus", "robe", "staff"];
+    case "Warlock":
+      return ["focus", "component", "rod", "tome", "chain"];
+    case "Ranger":
+      return ["leather", "cloak", "quiver", "arrows", "rations"];
+    case "Bard":
+      return ["instrument", "fine clothes", "rapier", "lute"];
+    default:
+      return ["chain", "scale", "shield", "pack"];
+  }
+}
+
+async function getArmorItemByStyle(style, tags) {
+  const armorKeywords = [];
+  if (style === "melee") armorKeywords.push("chain", "scale", "breastplate", "plate", "shield");
+  if (style === "ranged") armorKeywords.push("leather", "studded", "chain shirt");
+  if (style === "mixed") armorKeywords.push("leather", "studded", "chain shirt");
+  if (style === "caster") armorKeywords.push("mage armor", "robe", "cloak");
+
+  if (tags.includes("criminal")) armorKeywords.push("leather", "studded");
+  if (tags.includes("wilderness")) armorKeywords.push("leather", "hide");
+  if (tags.includes("holy")) armorKeywords.push("chain", "scale", "shield");
+
+  const preferredNames = [];
+  if (tags.includes("criminal")) {
+    preferredNames.push("Leather Armor", "Studded Leather Armor");
+  } else if (style === "melee") {
+    preferredNames.push("Chain Mail", "Scale Mail", "Breastplate", "Chain Shirt", "Shield");
+  } else {
+    preferredNames.push("Leather Armor", "Studded Leather Armor", "Chain Shirt");
+  }
+
+  for (const name of preferredNames) {
+    const byName = await getItemByNameFromPacks(
+      getPacks("weapons").concat(getPacks("loot")),
+      name
+    );
+    if (byName && isAllowedItemDoc(byName)) return byName;
+  }
+
+  const armor =
+    (await getRandomItemByKeywords(
+      getPacks("weapons"),
+      armorKeywords,
+      (entry) => (entry.type === "equipment" || entry.type === "armor") && isAllowedItemEntry(entry)
+    )) ||
+    (await getRandomItemByKeywords(
+      getPacks("loot"),
+      armorKeywords,
+      (entry) => (entry.type === "equipment" || entry.type === "armor") && isAllowedItemEntry(entry)
+    ));
+
+  return armor;
+}
+
+async function buildClassFeatureItems(npc) {
+  const className = getClassForArchetype(npc.archetype);
+  const count = npc.importantNpc ? 2 : 1;
+  const out = [];
+
+  const candidates = await getClassFeatureCandidates(className);
+  const picked = pickRandomN(candidates, count);
+  for (const entry of picked) {
+    const cached = getCachedDoc(entry.pack, entry._id);
+    if (cached) {
+      const item = cloneItemData(cached);
+      out.push(ensureActivities(item));
+      continue;
+    }
+    const pack = game.packs?.get(entry.pack);
+    if (!pack) continue;
+    const doc = await pack.getDocument(entry._id);
+    if (doc) {
+      const item = doc.toObject();
+      out.push(ensureActivities(item));
+    }
+  }
+
+  if (out.length) return out;
+  const cachedFallback = getRandomCachedDocByKeywords(
+    getPacks("classFeatures"),
+    [className],
+    (doc) => doc.type === "feat"
+  );
+  return cachedFallback ? [ensureActivities(cloneItemData(cachedFallback))] : out;
+}
+
+async function getClassFeatureCandidates(className) {
+  const matches = [];
+  const fallback = [];
+  const needle = className.toLowerCase();
+
+  for (const packName of getPacks("classFeatures")) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+    const index = await getPackIndex(pack, ["type", "name", "system.requirements"]);
+    for (const entry of index) {
+      if (entry.type !== "feat") continue;
+      const requirements = String(entry.system?.requirements || "").toLowerCase();
+      const record = { ...entry, pack: pack.collection };
+      if (requirements.includes(needle)) {
+        matches.push(record);
+      } else {
+        fallback.push(record);
+      }
+    }
+  }
+
+  return matches.length ? matches : fallback;
+}
+
+function toItemData(docOrData) {
+  if (!docOrData) return null;
+  return typeof docOrData.toObject === "function" ? docOrData.toObject() : docOrData;
+}
+
+function cloneItemData(data) {
+  if (!data) return data;
+  return foundry?.utils?.duplicate ? foundry.utils.duplicate(data) : JSON.parse(JSON.stringify(data));
+}
+
+function ensureActivities(item) {
+  if (!item?.system) return item;
+  if (item.system.activities && Object.keys(item.system.activities).length) return item;
+  item.system.activities = buildBasicAbilityActivities(item.name);
+  if (!item.system.activation) {
+    item.system.activation = { type: "action", value: 1, condition: "" };
+  }
+  return item;
+}
+
+function buildBasicAbilityActivities(name, activationType = "action") {
+  const id =
+    foundry?.utils?.randomID?.() ||
+    Math.random().toString(36).slice(2, 10);
+  return {
+    [id]: {
+      type: "utility",
+      activation: {
+        type: activationType,
+        value: 1,
+        condition: "",
+        override: false
+      },
+      consumption: {
+        targets: [],
+        scaling: { allowed: false, max: "" },
+        spellSlot: true
+      },
+      description: { chatFlavor: "" },
+      duration: {
+        concentration: false,
+        value: "",
+        units: "inst",
+        special: "",
+        override: false
+      },
+      effects: [],
+      range: { value: "", units: "ft", special: "", override: false },
+      target: {
+        template: {
+          count: "",
+          contiguous: false,
+          type: "",
+          size: "",
+          width: "",
+          height: "",
+          units: "ft"
+        },
+        affects: { count: "", type: "self", choice: false, special: "" },
+        prompt: true,
+        override: false
+      },
+      uses: { spent: 0, recovery: [], max: "" },
+      sort: 0,
+      _id: id,
+      name: name || "",
+      flags: {},
+      visibility: {
+        level: {},
+        requireAttunement: false,
+        requireIdentification: false,
+        requireMagic: false
+      },
+      roll: { prompt: false, visible: false }
+    }
+  };
+}
+
+function isAllowedItemEntry(entry) {
+  const rarity = String(entry.system?.rarity || "").toLowerCase();
+  const properties = entry.system?.properties || [];
+  const isMagical = Array.isArray(properties) && properties.includes("mgc");
+  if (isMagical) return false;
+  if (rarity && rarity !== "none") return false;
+  return true;
+}
+
+function isAllowedItemDoc(doc) {
+  const rarity = String(doc.system?.rarity || "").toLowerCase();
+  const properties = doc.system?.properties || [];
+  const isMagical = Array.isArray(properties) && properties.includes("mgc");
+  if (isMagical) return false;
+  if (rarity && rarity !== "none") return false;
+  return true;
+}
+
+function applyTierToAbilities(abilities, tier, importantNpc) {
+  const bonus = (tier - 1) * 2 + (importantNpc ? 2 : 0);
+  const ordered = Object.entries(abilities).sort((a, b) => b[1] - a[1]);
+
+  let remaining = bonus;
+  for (let i = 0; i < ordered.length && remaining > 0; i++) {
+    const key = ordered[i][0];
+    const add = Math.min(2, remaining);
+    abilities[key] += add;
+    remaining -= add;
+  }
+
+  return abilities;
+}
+
+function getPrimeAbilities(abilities) {
+  return Object.entries(abilities)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([key]) => key);
+}
+
+function getWeaponByStyle(style) {
+  if (style === "ranged") {
+    return {
+      name: "Shortbow",
+      actionType: "rwak",
+      ability: "dex",
+      base: "bow",
+      damageType: "piercing",
+      range: { value: 80, long: 320, units: "ft" }
+    };
+  }
+
+  if (style === "caster") {
+    return {
+      name: "Quarterstaff",
+      actionType: "mwak",
+      ability: "str",
+      base: "staff",
+      damageType: "bludgeoning",
+      range: { value: 5, long: 5, units: "ft" }
+    };
+  }
+
+  if (style === "mixed") {
+    return {
+      name: "Dagger",
+      actionType: "mwak",
+      ability: "dex",
+      base: "dagger",
+      damageType: "piercing",
+      range: { value: 5, long: 20, units: "ft" }
+    };
+  }
+
+  return {
+    name: "Longsword",
+    actionType: "mwak",
+    ability: "str",
+    base: "sword",
+    damageType: "slashing",
+    range: { value: 5, long: 5, units: "ft" }
+  };
+}
+
+function getDamageByTier(tier, base) {
+  if (base === "bow") {
+    if (tier <= 1) return "1d6 + 2";
+    if (tier === 2) return "1d8 + 3";
+    if (tier === 3) return "2d6 + 3";
+    return "2d8 + 4";
+  }
+
+  if (base === "dagger") {
+    if (tier <= 1) return "1d4 + 2";
+    if (tier === 2) return "1d6 + 3";
+    if (tier === 3) return "2d4 + 3";
+    return "2d6 + 4";
+  }
+
+  if (tier <= 1) return "1d6 + 2";
+  if (tier === 2) return "1d8 + 3";
+  if (tier === 3) return "2d6 + 3";
+  return "2d8 + 4";
+}
+
+function getProfBonus(tier) {
+  if (tier <= 2) return 2;
+  if (tier === 3) return 3;
+  return 4;
+}
+
+function rollCrByTier(tier) {
+  const table = {
+    1: ["1/8", "1/4", "1/2"],
+    2: ["1", "2", "3"],
+    3: ["4", "5", "6"],
+    4: ["7", "8", "9", "10"]
+  };
+  const value = pickRandom(table[tier] || ["1"]);
+  if (value.includes("/")) {
+    const [num, den] = value.split("/").map((n) => Number(n));
+    return den ? num / den : 0;
+  }
+  return Number(value) || 0;
+}
+
+function getAutoTier() {
+  const pcs = game.actors?.filter((a) => a.hasPlayerOwner && a.type === "character") || [];
+  if (!pcs.length) return 1;
+
+  const levels = pcs.map((a) => getActorLevel(a)).filter((n) => Number.isFinite(n));
+  const avg = levels.length ? levels.reduce((a, b) => a + b, 0) / levels.length : 1;
+
+  if (avg <= 3) return 1;
+  if (avg <= 6) return 2;
+  if (avg <= 10) return 3;
+  return 4;
+}
+
+function getActorLevel(actor) {
+  const level = actor.system?.details?.level ?? actor.system?.details?.cr ?? 1;
+  return Number(level) || 1;
+}
+
+async function loadData() {
+  if (DATA_CACHE.loaded) return;
+
+  const [names, traits, archetypes, abilities, loot] = await Promise.all([
+    fetchJson("names"),
+    fetchJson("traits"),
+    fetchJson("archetypes"),
+    fetchJson("loot")
+  ]);
+
+  DATA_CACHE.names = names;
+  DATA_CACHE.traits = traits;
+  DATA_CACHE.archetypes = archetypes;
+  DATA_CACHE.loot = loot;
+  DATA_CACHE.compendiumCache = await fetchOptionalJson(COMPENDIUM_CACHE_FILE);
+  DATA_CACHE.compendiumLists = DATA_CACHE.compendiumCache?.packsByType || null;
+  DATA_CACHE.loaded = true;
+}
+
+async function fetchJson(name) {
+  const response = await fetch(`modules/${MODULE_ID}/data/${name}.json`);
+  if (!response.ok) throw new Error(`${MODULE_ID} | Failed to load ${name}.json`);
+  return response.json();
+}
+
+async function fetchOptionalJson(name) {
+  try {
+    const response = await fetch(`modules/${MODULE_ID}/data/${name}.json`);
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+function getCachedPackIndex(pack) {
+  const cache = DATA_CACHE.compendiumCache;
+  if (!cache?.packs) return null;
+  const entry = cache.packs[pack.collection];
+  if (!entry?.entries?.length) return null;
+  return entry.entries;
+}
+
+function getCachedDoc(packName, id) {
+  const cache = DATA_CACHE.compendiumCache;
+  if (!cache?.packs) return null;
+  return cache.packs[packName]?.documents?.[id] || null;
+}
+
+function getCachedDocsForPacks(packs) {
+  const cache = DATA_CACHE.compendiumCache;
+  if (!cache?.packs) return [];
+  const out = [];
+  for (const packName of packs) {
+    const docs = cache.packs[packName]?.documents;
+    if (!docs) continue;
+    for (const doc of Object.values(docs)) out.push(doc);
+  }
+  return out;
+}
+
+function getCachedDocByName(packs, name) {
+  const target = String(name || "").trim().toLowerCase();
+  if (!target) return null;
+  const docs = getCachedDocsForPacks(packs);
+  return docs.find((doc) => getDocSearchStrings(doc).includes(target)) || null;
+}
+
+function getRandomCachedDocByKeywords(packs, keywords, predicate) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase()).filter(Boolean);
+  const docs = getCachedDocsForPacks(packs).filter((doc) => !predicate || predicate(doc));
+  if (!docs.length) return null;
+  if (!normalized.length) return pickRandom(docs);
+  const matches = docs.filter((doc) => {
+    const haystack = getDocSearchStrings(doc);
+    return normalized.some((k) => haystack.some((h) => h.includes(k)));
+  });
+  return matches.length ? pickRandom(matches) : pickRandom(docs);
+}
+
+function getDocSearchStrings(doc) {
+  const out = new Set();
+  const add = (value) => {
+    if (!value) return;
+    const str = String(value).trim().toLowerCase();
+    if (str) out.add(str);
+  };
+
+  add(doc.name);
+  add(doc.originalName);
+  add(doc.flags?.babele?.originalName);
+  add(doc.system?.identifier);
+  return Array.from(out);
+}
+
+function buildCachedSpellItemsFallback(maxLevel, keywords, count) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase()).filter(Boolean);
+  const docs = getCachedDocsForPacks(getPacks("spells")).filter((doc) => doc.type === "spell");
+  if (!docs.length) return [];
+
+  const byLevel = docs.filter((doc) => {
+    const level = Number(doc.system?.level ?? 0);
+    return Number.isFinite(level) && level <= maxLevel;
+  });
+
+  const pool = byLevel.length ? byLevel : docs;
+  const matches = normalized.length
+    ? pool.filter((doc) => normalized.some((k) => getDocSearchStrings(doc).some((h) => h.includes(k))))
+    : pool;
+
+  const picked = pickRandomN(matches.length ? matches : pool, count);
+  return picked.map((doc) => cloneItemData(doc));
+}
+
+function getEntrySearchStrings(entry) {
+  const out = new Set();
+  const add = (value) => {
+    if (!value) return;
+    const str = String(value).trim().toLowerCase();
+    if (str) out.add(str);
+  };
+
+  add(entry.name);
+  add(entry.originalName);
+  add(entry.flags?.babele?.originalName);
+  add(entry.system?.identifier);
+  return Array.from(out);
+}
+
+function warnMissingCacheOnce(packName) {
+  if (!DATA_CACHE.cacheWarnings) DATA_CACHE.cacheWarnings = new Set();
+  if (DATA_CACHE.cacheWarnings.has(packName)) return;
+  DATA_CACHE.cacheWarnings.add(packName);
+  // Silenced: cache may intentionally omit optional packs.
+}
+
+function collectAllItemPackNames() {
+  const names = new Set();
+  for (const pack of game.packs || []) {
+    if (pack.documentName !== "Item") continue;
+    const systemId = pack.metadata?.system;
+    if (systemId && systemId !== "dnd5e") continue;
+    names.add(pack.collection);
+  }
+  return names;
+}
+
+function buildPacksByType(packs) {
+  const packsByType = {
+    weapons: [],
+    loot: [],
+    spells: [],
+    features: [],
+    classFeatures: []
+  };
+
+  for (const [packName, packData] of Object.entries(packs)) {
+    const entries = packData.entries || [];
+    let hasWeapon = false;
+    let hasLoot = false;
+    let hasSpell = false;
+    let hasFeat = false;
+
+    for (const entry of entries) {
+      if (entry.type === "weapon" || entry.type === "equipment") hasWeapon = true;
+      if (entry.type === "loot" || entry.type === "consumable" || entry.type === "equipment") hasLoot = true;
+      if (entry.type === "spell") hasSpell = true;
+      if (entry.type === "feat") hasFeat = true;
+    }
+
+    if (hasWeapon) packsByType.weapons.push(packName);
+    if (hasLoot) packsByType.loot.push(packName);
+    if (hasSpell) packsByType.spells.push(packName);
+    if (hasFeat) packsByType.features.push(packName);
+
+    const label = String(packData.label || "").toLowerCase();
+    if (hasFeat && (packName.includes("class") || label.includes("class") || label.includes("класс"))) {
+      packsByType.classFeatures.push(packName);
+    }
+  }
+
+  if (!packsByType.classFeatures.length) {
+    packsByType.classFeatures = [...packsByType.features];
+  }
+
+  return packsByType;
+}
+
+async function buildCompendiumCache() {
+  if (!game.user?.isGM) {
+    ui.notifications?.warn("NPC Button: GM only.");
+    return;
+  }
+
+  const packNames = new Set();
+  Object.values(COMPENDIUMS).forEach((list) => {
+    if (Array.isArray(list)) list.forEach((name) => packNames.add(name));
+  });
+  collectAllItemPackNames().forEach((name) => packNames.add(name));
+
+  const fields = [
+    "type",
+    "name",
+    "system.rarity",
+    "system.properties",
+    "system.requirements",
+    "system.level"
+  ];
+
+  const output = {
+    generatedAt: new Date().toISOString(),
+    packs: {},
+    packsByType: {}
+  };
+
+  for (const packName of packNames) {
+    const pack = game.packs?.get(packName);
+    if (!pack) {
+      ui.notifications?.warn(`NPC Button: pack not found: ${packName}`);
+      continue;
+    }
+    const index = await pack.getIndex({ fields });
+    const documents = {};
+    try {
+      const docs = await pack.getDocuments();
+      for (const doc of docs) {
+        if (CACHE_DOC_TYPES.has(doc.type)) {
+          documents[doc.id] = doc.toObject();
+        }
+      }
+    } catch (err) {
+      console.warn(`NPC Button: failed to read documents for ${packName}`, err);
+    }
+    output.packs[pack.collection] = {
+      label: pack.title,
+      documentName: pack.documentName,
+      entries: index,
+      documents
+    };
+  }
+  output.packsByType = buildPacksByType(output.packs);
+
+  const data = JSON.stringify(output, null, 2);
+  const file = new File([data], `${COMPENDIUM_CACHE_FILE}.json`, {
+    type: "application/json"
+  });
+
+  try {
+    await FilePicker.upload("data", `modules/${MODULE_ID}/data`, file, {}, { notify: true });
+    DATA_CACHE.compendiumCache = output;
+    DATA_CACHE.compendiumLists = output.packsByType;
+    DATA_CACHE.packIndex = new Map();
+    ui.notifications?.info("NPC Button: Compendium cache built.");
+  } catch (err) {
+    console.error(err);
+    ui.notifications?.error("NPC Button: Failed to write compendium cache.");
+  }
+}
+
+function pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function pickRandomN(arr, n) {
+  if (arr.length <= n) return [...arr];
+  const pool = [...arr];
+  const out = [];
+  while (out.length < n && pool.length) {
+    const idx = Math.floor(Math.random() * pool.length);
+    out.push(pool.splice(idx, 1)[0]);
+  }
+  return out;
+}
+
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function chance(probability) {
+  return Math.random() < probability;
+}
+
+function capitalize(value) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
