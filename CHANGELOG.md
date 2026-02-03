@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.12
 - Race search input with auto-select best match
 - Expanded name lists across all cultures and titles
 
