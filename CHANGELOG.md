@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.14
 - Fix budgeted item selection stability
 - Prevent armor conflicts more reliably
 - Add race search auto-select
