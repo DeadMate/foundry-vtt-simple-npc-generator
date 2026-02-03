@@ -23,7 +23,33 @@ jobs:
           node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2));"
           VERSION=$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('module.json','utf8')); console.log(data.version);")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          node -e "const fs=require('fs'); const v=process.env.VERSION; const path='CHANGELOG.md'; const header='# Changelog'; const stub=`## ${v}\\n- TODO: describe changes\\n\\n`; if(!fs.existsSync(path)){fs.writeFileSync(path, `${header}\\n\\n${stub}`); process.exit(0);} let text=fs.readFileSync(path,'utf8'); if(!text.trim().startsWith(header)){text=`${header}\\n\\n${text.replace(/^#\\s*Changelog\\s*\\n*/i,'')}`;} const re=new RegExp(`^##\\\\s+${v.replace(/\\./g,'\\\\.')}\\\\s*$`,'m'); if(re.test(text)) process.exit(0); const insertPos=text.indexOf('\\n'); if(insertPos<0){fs.writeFileSync(path, `${header}\\n\\n${stub}`); process.exit(0);} text=`${header}\\n\\n${stub}` + text.slice(insertPos+1).replace(/^\\s*/,''); fs.writeFileSync(path, text);"
+
+      - name: Ensure changelog section
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const v = process.env.VERSION;
+          const path = 'CHANGELOG.md';
+          const header = '# Changelog';
+          const stub = `## ${v}\n- TODO: describe changes\n\n`;
+          if (!fs.existsSync(path)) {
+            fs.writeFileSync(path, `${header}\n\n${stub}`);
+            process.exit(0);
+          }
+          let text = fs.readFileSync(path, 'utf8');
+          if (!text.trim().startsWith(header)) {
+            text = `${header}\n\n${text.replace(/^#\s*Changelog\s*\n*/i, '')}`;
+          }
+          const re = new RegExp(`^##\\s+${v.replace(/\./g, '\\.')}$`, 'm');
+          if (re.test(text)) process.exit(0);
+          const insertPos = text.indexOf('\n');
+          if (insertPos < 0) {
+            fs.writeFileSync(path, `${header}\n\n${stub}`);
+            process.exit(0);
+          }
+          text = `${header}\n\n${stub}` + text.slice(insertPos + 1).replace(/^\s*/, '');
+          fs.writeFileSync(path, text);
+          NODE
         env:
           VERSION: ${{ steps.bump.outputs.version }}
 
