@@ -1,0 +1,9 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'>
+<circle cx='128' cy='128' r='120' fill='#10161c' />
+<circle cx='128' cy='70' r='26' fill='#ebebeb' />
+<rect x='93' y='96' width='70' height='110' rx='16' fill='#ebebeb' />
+<rect x='182' y='105' width='6' height='70' fill='#ebebeb' />
+<rect x='174' y='160' width='22' height='8' fill='#ebebeb' />
+<path d='M104,68 L82,60 L98,80 Z' fill='#ebebeb' />
+<path d='M152,68 L174,60 L158,80 Z' fill='#ebebeb' />
+</svg>
