@@ -1,3 +1,5 @@
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/ddmtvtt)
+
 # Simple NPC Generator (D&D 5e)
 
 One-click NPC generator for Foundry VTT. Creates a ready-to-play 5e NPC with stats, gear, spells/features, and a short description.
