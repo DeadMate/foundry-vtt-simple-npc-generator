@@ -6,6 +6,8 @@
 ## 0.1.12
 - Race search input with auto-select best match
 - Expanded name lists across all cultures and titles
+- Budgeted item selection uses price-aware sampling
+- Armor conflicts now resolved by name/type (keeps one armor + one shield)
 
 ## 0.1.11
 - Race selection from compendiums with applied racial features

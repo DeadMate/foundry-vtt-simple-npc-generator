@@ -315,6 +315,17 @@ async function openNpcDialog() {
         </div>
       </div>
       <div class="form-group">
+        <label>Budget</label>
+        <div class="form-fields">
+          <select name="budget">
+            <option value="poor">Poor</option>
+            <option value="normal" selected>Normal</option>
+            <option value="well">Well-Off</option>
+            <option value="elite">Elite</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
         <label>Culture</label>
         <div class="form-fields">
           <select name="culture">
@@ -435,6 +446,7 @@ async function createNpcFromForm(formData) {
   const folderId = String(formData.get("folder") || "").trim() || null;
   setLastFolderId(folderId);
   const countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
+  const budgetInput = String(formData.get("budget") || "normal");
   const speciesKeyInput = String(formData.get("species") || "random");
   let speciesList = DATA_CACHE.speciesEntries || [];
   if (!speciesList.length) {
@@ -474,6 +486,7 @@ async function createNpcFromForm(formData) {
       archetype,
       culture,
       race: speciesName,
+      budget: budgetInput,
       includeLoot,
       includeSecret,
       includeHook,
@@ -508,7 +521,7 @@ async function createNpcFromForm(formData) {
 }
 
 function generateNpc(options) {
-  const { tier, archetype, culture, race, includeLoot, includeSecret, includeHook, importantNpc } = options;
+  const { tier, archetype, culture, race, budget, includeLoot, includeSecret, includeHook, importantNpc } = options;
   const names = DATA_CACHE.names;
   const traits = DATA_CACHE.traits;
 
@@ -547,6 +560,7 @@ function generateNpc(options) {
     hp,
     speed,
     race,
+    budget,
     abilities,
     prime,
     appearance,
@@ -598,6 +612,8 @@ async function buildActorData(npc, folderId = null) {
     }
     items.push(...lootItems);
   }
+
+  normalizeArmorItems(items);
 
   const actorData = {
     name: npc.name,
@@ -669,16 +685,18 @@ async function buildWeaponItem(npc) {
   const className = getClassForArchetype(npc.archetype);
   const weaponKeywords = getWeaponKeywords(style, tags).concat(getClassWeaponKeywords(className));
   const weaponPacks = getPacks("weapons");
+  const budget = npc.budget || "normal";
   const compendiumWeapon =
-    (await getRandomItemByKeywords(
+    (await getRandomItemByKeywordsWithBudget(
       weaponPacks,
       weaponKeywords,
-      (entry) =>
-        (entry.type === "weapon" || entry.type === "equipment") && isAllowedItemEntry(entry)
+      (entry) => (entry.type === "weapon" || entry.type === "equipment") && isAllowedItemEntry(entry),
+      budget
     )) ||
-    (await getRandomItemFromPacks(
+    (await getRandomItemFromPacksWithBudget(
       weaponPacks,
-      (entry) => entry.type === "weapon" && isAllowedItemEntry(entry)
+      (entry) => entry.type === "weapon" && isAllowedItemEntry(entry),
+      budget
     ));
 
   if (compendiumWeapon) {
@@ -689,15 +707,17 @@ async function buildWeaponItem(npc) {
   }
 
   const cachedWeapon =
-    getRandomCachedDocByKeywords(
+    getRandomCachedDocByKeywordsWithBudget(
       weaponPacks,
       weaponKeywords,
-      (doc) => (doc.type === "weapon" || doc.type === "equipment") && isAllowedItemDoc(doc)
+      (doc) => (doc.type === "weapon" || doc.type === "equipment") && isAllowedItemDoc(doc),
+      budget
     ) ||
-    getRandomCachedDocByKeywords(
+    getRandomCachedDocByKeywordsWithBudget(
       weaponPacks,
       [],
-      (doc) => doc.type === "weapon" && isAllowedItemDoc(doc)
+      (doc) => doc.type === "weapon" && isAllowedItemDoc(doc),
+      budget
     );
 
   if (cachedWeapon) {
@@ -741,25 +761,28 @@ async function buildRoleAbilityItems(npc) {
 async function buildLootItem(name, npc) {
   const allowMagic = shouldAllowMagicItem(npc);
   const lootPacks = getPacks("loot");
+  const budget = npc?.budget || "normal";
   const byName = await getItemByNameFromPacks(lootPacks, name);
-  if (byName && isAllowedItemDoc(byName, allowMagic)) {
+  if (byName && isAllowedItemDoc(byName, allowMagic) && isWithinBudget(byName, budget, true)) {
     const lootData = cloneItemData(toItemData(byName));
     if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
     return lootData;
   }
 
   const cachedByName = getCachedDocByName(lootPacks, name);
-  if (cachedByName && isAllowedItemDoc(cachedByName, allowMagic)) {
+  if (cachedByName && isAllowedItemDoc(cachedByName, allowMagic) && isWithinBudget(cachedByName, budget, true)) {
     const lootData = cloneItemData(cachedByName);
     if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
     return lootData;
   }
 
-  const compendiumLoot = await getRandomItemFromPacks(
+  const compendiumLoot = await getRandomItemFromPacksWithBudget(
     lootPacks,
     (entry) =>
       (entry.type === "loot" || entry.type === "consumable" || entry.type === "equipment") &&
-      isAllowedItemEntry(entry, allowMagic)
+      isAllowedItemEntry(entry, allowMagic),
+    budget,
+    true
   );
 
   if (compendiumLoot) {
@@ -769,19 +792,21 @@ async function buildLootItem(name, npc) {
   }
 
   const cachedLoot =
-    getRandomCachedDocByKeywords(
+    getRandomCachedDocByKeywordsWithBudget(
       lootPacks,
       [name],
-      (doc) =>
-        (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
-        isAllowedItemDoc(doc, allowMagic)
+      (doc) => (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
+        isAllowedItemDoc(doc, allowMagic),
+      budget,
+      true
     ) ||
-    getRandomCachedDocByKeywords(
+    getRandomCachedDocByKeywordsWithBudget(
       lootPacks,
       [],
-      (doc) =>
-        (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
-        isAllowedItemDoc(doc, allowMagic)
+      (doc) => (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
+        isAllowedItemDoc(doc, allowMagic),
+      budget,
+      true
     );
 
   if (cachedLoot) {
@@ -1081,11 +1106,28 @@ async function getRandomItemFromPacks(packs, predicate) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
 
-    const index = await getPackIndex(pack, ["type", "name", "system.rarity"]);
+    const index = await getPackIndex(pack, getItemIndexFields());
     const candidates = index.filter(predicate);
     if (!candidates.length) continue;
 
     const entry = pickRandom(candidates);
+    const cached = getCachedDoc(pack.collection, entry._id);
+    if (cached) return cached;
+    return pack.getDocument(entry._id);
+  }
+  return null;
+}
+
+async function getRandomItemFromPacksWithBudget(packs, predicate, budget, allowMagic = false) {
+  for (const packName of packs) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+
+    const index = await getPackIndex(pack, getItemIndexFields());
+    const candidates = index.filter(predicate);
+    if (!candidates.length) continue;
+
+    const entry = await pickByBudgetAsync(pack, candidates, budget, allowMagic);
     const cached = getCachedDoc(pack.collection, entry._id);
     if (cached) return cached;
     return pack.getDocument(entry._id);
@@ -1099,7 +1141,7 @@ async function getRandomItemByKeywords(packs, keywords, predicate) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
 
-    const index = await getPackIndex(pack, ["type", "name", "system.rarity"]);
+    const index = await getPackIndex(pack, getItemIndexFields());
     const candidates = index.filter((entry) => {
       if (predicate && !predicate(entry)) return false;
       if (!normalized.length) return true;
@@ -1116,6 +1158,29 @@ async function getRandomItemByKeywords(packs, keywords, predicate) {
   return null;
 }
 
+async function getRandomItemByKeywordsWithBudget(packs, keywords, predicate, budget, allowMagic = false) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  for (const packName of packs) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+
+    const index = await getPackIndex(pack, getItemIndexFields());
+    const candidates = index.filter((entry) => {
+      if (predicate && !predicate(entry)) return false;
+      if (!normalized.length) return true;
+      const haystack = getEntrySearchStrings(entry);
+      return normalized.some((k) => haystack.some((h) => h.includes(k)));
+    });
+    if (!candidates.length) continue;
+
+    const entry = await pickByBudgetAsync(pack, candidates, budget, allowMagic);
+    const cached = getCachedDoc(pack.collection, entry._id);
+    if (cached) return cached;
+    return pack.getDocument(entry._id);
+  }
+  return null;
+}
+
 async function getItemByNameFromPacks(packs, name) {
   const target = String(name || "").trim().toLowerCase();
   if (!target) return null;
@@ -1124,7 +1189,7 @@ async function getItemByNameFromPacks(packs, name) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
 
-    const index = await getPackIndex(pack, ["type", "name", "system.rarity"]);
+    const index = await getPackIndex(pack, getItemIndexFields());
     const match = index.find((entry) => {
       const haystack = getEntrySearchStrings(entry);
       return haystack.includes(target);
@@ -1148,11 +1213,15 @@ async function getPackIndex(pack, fields = ["type", "name"]) {
 
   const cached = getCachedPackIndex(pack);
   if (cached) {
-    DATA_CACHE.packIndex.set(key, cached);
-    return cached;
+    const wantsPrice = fields.some((f) => String(f).includes("system.price"));
+    if (!wantsPrice || cachedIndexHasPrice(cached)) {
+      DATA_CACHE.packIndex.set(key, cached);
+      return cached;
+    }
   }
 
-  if (USE_COMPENDIUM_CACHE && DATA_CACHE.compendiumCache) {
+  const wantsPrice = fields.some((f) => String(f).includes("system.price"));
+  if (USE_COMPENDIUM_CACHE && DATA_CACHE.compendiumCache && !wantsPrice) {
     DATA_CACHE.packIndex.set(key, []);
     warnMissingCacheOnce(pack.collection);
     return [];
@@ -1161,6 +1230,183 @@ async function getPackIndex(pack, fields = ["type", "name"]) {
   const index = await pack.getIndex({ fields });
   DATA_CACHE.packIndex.set(key, index);
   return index;
+}
+
+function getItemIndexFields() {
+  return ["type", "name", "system.rarity", "system.price"];
+}
+
+function getBudgetRange(budget, allowMagic = false) {
+  switch (budget) {
+    case "poor":
+      return { min: 0, max: 100 }; // up to 1 gp
+    case "well":
+      return { min: 50, max: 5000 }; // 0.5 gp to 50 gp
+    case "elite":
+      return { min: 200, max: allowMagic ? 200000 : 20000 }; // 2 gp to 200/2000 gp
+    case "normal":
+    default:
+      return { min: 10, max: 2000 }; // 0.1 gp to 20 gp
+  }
+}
+
+function isWithinBudget(entryOrDoc, budget, allowMagic = false) {
+  const range = getBudgetRange(budget, allowMagic);
+  const price = getItemPriceValue(entryOrDoc);
+  if (price == null) return true;
+  return price >= range.min && price <= range.max;
+}
+
+function pickByBudget(candidates, budget, allowMagic, priceFn) {
+  if (!Array.isArray(candidates) || !candidates.length) return null;
+  const priced = candidates
+    .map((c) => ({ c, price: priceFn(c) }))
+    .filter((p) => Number.isFinite(p.price));
+  if (!priced.length) return pickRandom(candidates);
+
+  const sorted = priced.sort((a, b) => a.price - b.price);
+  const n = sorted.length;
+  const pickRange = (fromPct, toPct) => {
+    const start = Math.max(0, Math.floor(n * fromPct));
+    const end = Math.min(n - 1, Math.floor(n * toPct));
+    const slice = sorted.slice(start, end + 1);
+    return slice.length ? pickRandom(slice).c : sorted[Math.floor(n / 2)].c;
+  };
+
+  switch (budget) {
+    case "poor":
+      return pickRange(0, 0.3);
+    case "well":
+      return pickRange(0.6, 0.9);
+    case "elite":
+      return pickRange(0.8, 1.0);
+    case "normal":
+    default:
+      return pickRange(0.3, 0.7);
+  }
+}
+
+async function pickByBudgetAsync(pack, candidates, budget, allowMagic) {
+  if (!Array.isArray(candidates) || !candidates.length) return null;
+
+  const priced = [];
+  for (const entry of candidates) {
+    const price = getPriceFromEntry(pack.collection, entry);
+    if (Number.isFinite(price)) priced.push({ c: entry, price });
+  }
+
+  if (!priced.length) {
+    const sampled = await samplePricesFromDocuments(pack, candidates, 12);
+    if (sampled.length) {
+      const sorted = sampled.sort((a, b) => a.price - b.price);
+      return pickByBudget(sorted.map((s) => s.c), budget, allowMagic, (e) => sampled.find((s) => s.c === e)?.price);
+    }
+    return pickRandom(candidates);
+  }
+
+  const sorted = priced.sort((a, b) => a.price - b.price);
+  const justEntries = sorted.map((p) => p.c);
+  return pickByBudget(justEntries, budget, allowMagic, (e) => priced.find((p) => p.c === e)?.price);
+}
+
+function getPriceFromEntry(packName, entry) {
+  const direct = getItemPriceValue(entry);
+  if (Number.isFinite(direct)) return direct;
+  const cached = getCachedDoc(packName, entry._id);
+  if (cached) return getItemPriceValue(cached);
+  return null;
+}
+
+async function samplePricesFromDocuments(pack, candidates, limit = 10) {
+  const sampled = [];
+  const pool = candidates.slice();
+  while (pool.length && sampled.length < limit) {
+    const idx = Math.floor(Math.random() * pool.length);
+    const entry = pool.splice(idx, 1)[0];
+    try {
+      const doc = await pack.getDocument(entry._id);
+      const price = getItemPriceValue(doc);
+      if (Number.isFinite(price)) sampled.push({ c: entry, price });
+    } catch {
+      // ignore
+    }
+  }
+  return sampled;
+}
+
+function getItemPriceValue(entryOrDoc) {
+  const price = entryOrDoc?.system?.price;
+  if (price == null) return null;
+  if (typeof price === "number") return price;
+  const value = price.value ?? price;
+  const denom = String(price.denomination || price.unit || "").toLowerCase();
+  if (typeof value === "number") return convertToCp(value, denom);
+  if (typeof value === "string") {
+    const parsed = parsePriceString(value);
+    if (parsed) return convertToCp(parsed.value, parsed.denom);
+  }
+  return null;
+}
+
+function parsePriceString(text) {
+  const match = String(text).trim().toLowerCase().match(/([0-9]+(?:\.[0-9]+)?)\s*(pp|gp|ep|sp|cp)?/);
+  if (!match) return null;
+  return { value: Number(match[1]), denom: match[2] || "gp" };
+}
+
+function convertToCp(value, denom) {
+  const mult = { cp: 1, sp: 10, ep: 50, gp: 100, pp: 1000 };
+  return Math.round((value || 0) * (mult[denom] || 100));
+}
+
+function normalizeArmorItems(items) {
+  if (!Array.isArray(items) || !items.length) return;
+  const armor = [];
+  const shields = [];
+  const rest = [];
+  for (const item of items) {
+    if (isArmorItem(item)) {
+      if (isShieldItem(item)) shields.push(item);
+      else armor.push(item);
+    } else {
+      rest.push(item);
+    }
+  }
+
+  const pickBest = (arr) => {
+    if (!arr.length) return [];
+    const sorted = arr.slice().sort((a, b) => {
+      const pa = getItemPriceValue(a) ?? 0;
+      const pb = getItemPriceValue(b) ?? 0;
+      return pb - pa;
+    });
+    return [sorted[0]];
+  };
+
+  const kept = [...rest, ...pickBest(armor), ...pickBest(shields)];
+  items.length = 0;
+  items.push(...kept);
+}
+
+function isArmorItem(item) {
+  if (!item) return false;
+  const type = String(item.type || "").toLowerCase();
+  if (type !== "equipment") return false;
+  const armorType = item.system?.armor?.type;
+  if (armorType) return true;
+  const typeValue = String(item.system?.type?.value || "").toLowerCase();
+  if (["light", "medium", "heavy", "shield", "armor"].includes(typeValue)) return true;
+  const name = String(item.name || "").toLowerCase();
+  return /armor|mail|plate|chain|leather|scale|breastplate|shield|доспех|кольчуг|латы|панцир|щит/i.test(name);
+}
+
+function isShieldItem(item) {
+  const armorType = item.system?.armor?.type;
+  if (armorType === "shield") return true;
+  const typeValue = String(item.system?.type?.value || "").toLowerCase();
+  if (typeValue === "shield") return true;
+  const name = String(item.name || "").toLowerCase();
+  return /shield|щит/i.test(name);
 }
 
 async function buildSpellItems(npc) {
@@ -1246,14 +1492,18 @@ async function buildRoleItems(npc) {
   const out = [];
   const added = new Set();
   const packs = getPacks("weapons").concat(getPacks("loot"));
+  const budget = npc.budget || "normal";
 
   const armor = await getArmorItemByStyle(style, tags);
-  if (armor) addUniqueItem(out, added, cloneItemData(toItemData(armor)));
+  if (armor && isWithinBudget(armor, budget)) {
+    addUniqueItem(out, added, cloneItemData(toItemData(armor)));
+  }
   if (!armor) {
-    const cachedArmor = getRandomCachedDocByKeywords(
+    const cachedArmor = getRandomCachedDocByKeywordsWithBudget(
       packs,
       ["armor", "shield", "mail", "leather"],
-      (doc) => (doc.type === "equipment" || doc.type === "armor") && isAllowedItemDoc(doc)
+      (doc) => (doc.type === "equipment" || doc.type === "armor") && isAllowedItemDoc(doc),
+      budget
     );
     if (cachedArmor) addUniqueItem(out, added, cloneItemData(cachedArmor));
   }
@@ -1283,7 +1533,8 @@ async function buildRoleItems(npc) {
         isAllowedItemEntry(entry),
       (doc) =>
         (doc.type === "equipment" || doc.type === "loot" || doc.type === "consumable") &&
-        isAllowedItemDoc(doc)
+        isAllowedItemDoc(doc),
+      budget
     );
     if (item) addUniqueItem(out, added, item);
   }
@@ -1298,7 +1549,8 @@ async function buildRoleItems(npc) {
         isAllowedItemEntry(entry),
       (doc) =>
         (doc.type === "equipment" || doc.type === "loot" || doc.type === "consumable") &&
-        isAllowedItemDoc(doc)
+        isAllowedItemDoc(doc),
+      budget
     );
     if (picked) addUniqueItem(out, added, picked);
   }
@@ -1338,10 +1590,10 @@ function buildEquipmentKeywordPools(style, tags, className) {
   return pools.filter((p) => p && p.length);
 }
 
-async function pickItemFromKeywords(packs, keywords, entryPredicate, docPredicate) {
-  const picked = await getRandomItemByKeywords(packs, keywords, entryPredicate);
+async function pickItemFromKeywords(packs, keywords, entryPredicate, docPredicate, budget) {
+  const picked = await getRandomItemByKeywordsWithBudget(packs, keywords, entryPredicate, budget);
   if (picked) return cloneItemData(toItemData(picked));
-  const cached = getRandomCachedDocByKeywords(packs, keywords, docPredicate);
+  const cached = getRandomCachedDocByKeywordsWithBudget(packs, keywords, docPredicate, budget);
   if (cached) return cloneItemData(cached);
   return null;
 }
@@ -1835,6 +2087,13 @@ function getCachedPackIndex(pack) {
   return entry.entries;
 }
 
+function cachedIndexHasPrice(entries) {
+  const sample = entries?.[0];
+  if (!sample) return false;
+  const price = sample.system?.price ?? sample.system?.price?.value;
+  return price !== undefined && price !== null;
+}
+
 function getCachedDoc(packName, id) {
   const cache = DATA_CACHE.compendiumCache;
   if (!cache?.packs) return null;
@@ -1998,7 +2257,8 @@ async function buildCompendiumCache() {
     "system.rarity",
     "system.properties",
     "system.requirements",
-    "system.level"
+    "system.level",
+    "system.price"
   ];
 
   const output = {
