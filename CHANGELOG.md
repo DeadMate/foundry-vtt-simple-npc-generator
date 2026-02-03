@@ -1,7 +1,15 @@
 # Changelog
 
+## Unreleased
+- Enforce unreleased changelog notes before release
+
 ## 0.1.9
-- TODO: describe changes
+- More varied class- and role-based equipment picks
+- Optional magic loot chance by tier (no artifacts)
+- Folder selection for new NPCs (remembers last used)
+- Bulk NPC generation with +/- count controls
+- Safer loot generation when tables are missing
+- Expanded names and traits; hooks rewritten for variety
 
 ## 0.1.8
 - More varied class- and role-based equipment picks

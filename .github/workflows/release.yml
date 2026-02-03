@@ -32,9 +32,9 @@ jobs:
           if (!v) throw new Error('VERSION not set');
           const path = 'CHANGELOG.md';
           const header = '# Changelog';
-          const stub = `## ${v}\n- TODO: describe changes\n`;
+          const unreleasedHeader = '## Unreleased';
           if (!fs.existsSync(path)) {
-            fs.writeFileSync(path, `${header}\n\n${stub}\n`);
+            fs.writeFileSync(path, `${header}\n\n${unreleasedHeader}\n- TODO: describe changes\n\n`);
             process.exit(0);
           }
           const text = fs.readFileSync(path, 'utf8');
@@ -42,13 +42,32 @@ jobs:
           if (!/^#\s*Changelog/i.test(lines[0] || '')) {
             lines.unshift('# Changelog', '');
           }
+          if (lines[1] !== '') lines.splice(1, 0, '');
+
+          // Ensure Unreleased exists at the top.
+          let unreleasedIndex = lines.findIndex(l => /^##\s+Unreleased\s*$/i.test(l));
+          if (unreleasedIndex === -1) {
+            lines.splice(2, 0, '## Unreleased', '- TODO: describe changes', '');
+            unreleasedIndex = 2;
+          }
+
+          // Extract Unreleased content.
+          const nextSection = lines.slice(unreleasedIndex + 1).findIndex(l => /^##\s+/.test(l));
+          const endIndex = nextSection === -1 ? lines.length : unreleasedIndex + 1 + nextSection;
+          const content = lines.slice(unreleasedIndex + 1, endIndex).join('\n').trim();
+          if (!content || /^- TODO: describe changes\s*$/i.test(content)) {
+            throw new Error('Fill in the Unreleased section before pushing.');
+          }
+
+          // If current version already exists, nothing to do.
           if (lines.some(l => new RegExp(`^##\\s+${v.replace(/\./g, '\\.')}$`).test(l))) {
             process.exit(0);
           }
-          // Insert new section after header + blank line
-          let insertAt = 2;
-          if (lines[1] !== '') lines.splice(1, 0, '');
-          lines.splice(insertAt, 0, `## ${v}`, '- TODO: describe changes', '');
+
+          // Replace Unreleased header with the new version and insert a fresh Unreleased section on top.
+          lines[unreleasedIndex] = `## ${v}`;
+          lines.splice(2, 0, '## Unreleased', '- TODO: describe changes', '');
+
           fs.writeFileSync(path, lines.join('\n').replace(/\n{3,}/g, '\n\n'));
           NODE
         env:
