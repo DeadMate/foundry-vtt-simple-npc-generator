@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+- Expanded NPC name lists further (more cultures, titles, and surnames)
+
+## 0.1.2
+- Minor name list expansion and cleanup
+
 ## 0.1.1
 - Expanded name lists across cultures and surnames
 - Added more trait variety for NPC generation
