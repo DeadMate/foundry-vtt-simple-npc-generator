@@ -29,26 +29,27 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const v = process.env.VERSION;
+          if (!v) throw new Error('VERSION not set');
           const path = 'CHANGELOG.md';
           const header = '# Changelog';
-          const stub = `## ${v}\n- TODO: describe changes\n\n`;
+          const stub = `## ${v}\n- TODO: describe changes\n`;
           if (!fs.existsSync(path)) {
-            fs.writeFileSync(path, `${header}\n\n${stub}`);
+            fs.writeFileSync(path, `${header}\n\n${stub}\n`);
             process.exit(0);
           }
-          let text = fs.readFileSync(path, 'utf8');
-          if (!text.trim().startsWith(header)) {
-            text = `${header}\n\n${text.replace(/^#\s*Changelog\s*\n*/i, '')}`;
+          const text = fs.readFileSync(path, 'utf8');
+          const lines = text.split(/\r?\n/);
+          if (!/^#\s*Changelog/i.test(lines[0] || '')) {
+            lines.unshift('# Changelog', '');
           }
-          const re = new RegExp(`^##\\s+${v.replace(/\./g, '\\.')}$`, 'm');
-          if (re.test(text)) process.exit(0);
-          const insertPos = text.indexOf('\n');
-          if (insertPos < 0) {
-            fs.writeFileSync(path, `${header}\n\n${stub}`);
+          if (lines.some(l => new RegExp(`^##\\s+${v.replace(/\./g, '\\.')}$`).test(l))) {
             process.exit(0);
           }
-          text = `${header}\n\n${stub}` + text.slice(insertPos + 1).replace(/^\s*/, '');
-          fs.writeFileSync(path, text);
+          // Insert new section after header + blank line
+          let insertAt = 2;
+          if (lines[1] !== '') lines.splice(1, 0, '');
+          lines.splice(insertAt, 0, `## ${v}`, '- TODO: describe changes', '');
+          fs.writeFileSync(path, lines.join('\n').replace(/\n{3,}/g, '\n\n'));
           NODE
         env:
           VERSION: ${{ steps.bump.outputs.version }}

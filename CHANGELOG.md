@@ -3,7 +3,13 @@
 ## 0.1.6
 - TODO: describe changes
 
-undefined
+## 0.1.5
+- Release pipeline fixes for changelog sync
+
+## 0.1.4
+- Changelog updates for recent releases
+
+## 0.1.3
 - Expanded NPC name lists further (more cultures, titles, and surnames)
 
 ## 0.1.2
