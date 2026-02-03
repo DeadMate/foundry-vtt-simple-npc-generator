@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.6
+- TODO: describe changes
+
 undefined
 - Expanded NPC name lists further (more cultures, titles, and surnames)
 
