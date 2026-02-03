@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.9
+- TODO: describe changes
+
 ## 0.1.8
 - More varied class- and role-based equipment picks
 - Optional magic loot chance by tier (no artifacts)
