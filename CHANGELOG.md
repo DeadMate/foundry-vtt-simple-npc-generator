@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8
+- More varied class- and role-based equipment picks
+- Optional magic loot chance by tier (no artifacts)
+- Folder selection for new NPCs (remembers last used)
+- Bulk NPC generation with +/- count controls
+- Safer loot generation when tables are missing
+
 ## 0.1.7
 - TODO: describe changes
 

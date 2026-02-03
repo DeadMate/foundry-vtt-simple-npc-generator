@@ -18,6 +18,12 @@ function getPacks(kind) {
 }
 
 Hooks.once("init", () => {
+  game.settings.register(MODULE_ID, "lastFolderId", {
+    scope: "client",
+    config: false,
+    type: String,
+    default: ""
+  });
 });
 
 Hooks.once("ready", () => {
@@ -38,6 +44,29 @@ Hooks.on("renderSidebarTab", (app, html) => {
   if (!isActorsTab) return;
   addNpcButton(html);
 });
+
+function getActorFolderOptions() {
+  const folders = (game.folders || []).filter((folder) => folder.type === "Actor");
+  if (!folders.length) return "";
+  const sorted = folders.slice().sort((a, b) => {
+    const aName = String(a.name || "").toLowerCase();
+    const bName = String(b.name || "").toLowerCase();
+    return aName.localeCompare(bName);
+  });
+  return sorted.map((folder) => `<option value="${folder.id}">${folder.name}</option>`).join("");
+}
+
+function getLastFolderId() {
+  const stored = game.settings?.get(MODULE_ID, "lastFolderId");
+  if (!stored) return "";
+  const folder = game.folders?.get(stored);
+  return folder ? stored : "";
+}
+
+function setLastFolderId(folderId) {
+  if (!game.settings) return;
+  game.settings.set(MODULE_ID, "lastFolderId", folderId || "");
+}
 
 function addNpcButton(html) {
   const $html = html instanceof HTMLElement ? $(html) : html;
@@ -96,6 +125,8 @@ async function openNpcDialog() {
   const options = archetypes
     .map((a) => `<option value="${a.id}">${a.name}</option>`)
     .join("");
+  const folderOptions = getActorFolderOptions();
+  const lastFolder = getLastFolderId();
 
   const content = `
     <form>
@@ -132,6 +163,23 @@ async function openNpcDialog() {
         </div>
       </div>
       <div class="form-group">
+        <label>Count</label>
+        <div class="form-fields" style="gap: 0.5rem; align-items: center;">
+          <button type="button" data-npc-count="minus">-</button>
+          <input type="number" name="count" value="1" min="1" max="50" style="width: 5rem; text-align: center;">
+          <button type="button" data-npc-count="plus">+</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Folder</label>
+        <div class="form-fields">
+          <select name="folder">
+            <option value="">None</option>
+            ${folderOptions}
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
         <label>Options</label>
         <div class="form-fields" style="flex-direction: column; align-items: flex-start;">
           <label class="checkbox"><input type="checkbox" name="includeLoot" checked> Loot</label>
@@ -163,7 +211,21 @@ async function openNpcDialog() {
       },
       cancel: { label: "Cancel" }
     },
-    default: "create"
+    default: "create",
+    render: (html) => {
+      const form = html.find("form");
+      if (lastFolder) {
+        form.find("select[name='folder']").val(lastFolder);
+      }
+      const input = form.find("input[name='count']");
+      const clamp = (val) => Math.max(1, Math.min(50, Number(val) || 1));
+      form.find("[data-npc-count='minus']").on("click", () => {
+        input.val(clamp(Number(input.val()) - 1));
+      });
+      form.find("[data-npc-count='plus']").on("click", () => {
+        input.val(clamp(Number(input.val()) + 1));
+      });
+    }
   }).render(true);
 }
 
@@ -174,35 +236,49 @@ async function createNpcFromForm(formData) {
   const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
   const cultureInput = formData.get("culture");
   const archetypeInput = formData.get("archetype");
+  const folderId = String(formData.get("folder") || "").trim() || null;
+  setLastFolderId(folderId);
+  const countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
   const includeLoot = formData.get("includeLoot") === "on";
   const includeSecret = formData.get("includeSecret") === "on";
   const includeHook = formData.get("includeHook") === "on";
   const importantNpc = formData.get("importantNpc") === "on";
 
-  const archetype =
-    archetypeInput === "random"
-      ? pickRandom(DATA_CACHE.archetypes)
-      : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
+  const created = [];
+  for (let i = 0; i < countInput; i++) {
+    const archetype =
+      archetypeInput === "random"
+        ? pickRandom(DATA_CACHE.archetypes)
+        : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
 
-  const culture =
-    cultureInput === "random"
-      ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
-      : cultureInput;
+    const culture =
+      cultureInput === "random"
+        ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
+        : cultureInput;
 
-  const generated = generateNpc({
-    tier,
-    archetype,
-    culture,
-    includeLoot,
-    includeSecret,
-    includeHook,
-    importantNpc
-  });
+    const generated = generateNpc({
+      tier,
+      archetype,
+      culture,
+      includeLoot,
+      includeSecret,
+      includeHook,
+      importantNpc
+    });
 
-  const actorData = await buildActorData(generated);
+    const actorData = await buildActorData(generated, folderId);
+    const actor = await Actor.create(actorData);
+    created.push(actor);
+  }
 
-  await Actor.create(actorData);
-  ui.notifications?.info(`Created NPC: ${generated.name}`);
+  if (created.length === 1) {
+    ui.notifications?.info(`Created NPC: ${created[0]?.name || "Unnamed"}`);
+    return;
+  }
+  const names = created.map((a) => a?.name).filter(Boolean);
+  const preview = names.slice(0, 5).join(", ");
+  const extra = names.length > 5 ? ` +${names.length - 5} more` : "";
+  ui.notifications?.info(`Created ${created.length} NPCs: ${preview}${extra}`);
 }
 
 function generateNpc(options) {
@@ -260,7 +336,7 @@ function generateNpc(options) {
   };
 }
 
-async function buildActorData(npc) {
+async function buildActorData(npc, folderId = null) {
   const tokenImg = "icons/svg/mystery-man.svg";
 
   const biography = buildBiography(npc);
@@ -291,7 +367,7 @@ async function buildActorData(npc) {
   if (npc.loot) {
     const lootItems = [];
     for (const name of npc.loot.items) {
-      lootItems.push(await buildLootItem(name));
+      lootItems.push(await buildLootItem(name, npc));
     }
     items.push(...lootItems);
   }
@@ -299,6 +375,7 @@ async function buildActorData(npc) {
   const actorData = {
     name: npc.name,
     type: "npc",
+    folder: folderId || undefined,
     img: tokenImg,
     prototypeToken: {
       name: npc.name,
@@ -432,17 +509,18 @@ async function buildRoleAbilityItems(npc) {
   return buildFeatureItems(npc);
 }
 
-async function buildLootItem(name) {
+async function buildLootItem(name, npc) {
+  const allowMagic = shouldAllowMagicItem(npc);
   const lootPacks = getPacks("loot");
   const byName = await getItemByNameFromPacks(lootPacks, name);
-  if (byName && isAllowedItemDoc(byName)) {
+  if (byName && isAllowedItemDoc(byName, allowMagic)) {
     const lootData = cloneItemData(toItemData(byName));
     if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
     return lootData;
   }
 
   const cachedByName = getCachedDocByName(lootPacks, name);
-  if (cachedByName && isAllowedItemDoc(cachedByName)) {
+  if (cachedByName && isAllowedItemDoc(cachedByName, allowMagic)) {
     const lootData = cloneItemData(cachedByName);
     if (lootData.system?.quantity !== undefined) lootData.system.quantity = 1;
     return lootData;
@@ -452,7 +530,7 @@ async function buildLootItem(name) {
     lootPacks,
     (entry) =>
       (entry.type === "loot" || entry.type === "consumable" || entry.type === "equipment") &&
-      isAllowedItemEntry(entry)
+      isAllowedItemEntry(entry, allowMagic)
   );
 
   if (compendiumLoot) {
@@ -467,14 +545,14 @@ async function buildLootItem(name) {
       [name],
       (doc) =>
         (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
-        isAllowedItemDoc(doc)
+        isAllowedItemDoc(doc, allowMagic)
     ) ||
     getRandomCachedDocByKeywords(
       lootPacks,
       [],
       (doc) =>
         (doc.type === "loot" || doc.type === "consumable" || doc.type === "equipment") &&
-        isAllowedItemDoc(doc)
+        isAllowedItemDoc(doc, allowMagic)
     );
 
   if (cachedLoot) {
@@ -497,7 +575,14 @@ async function buildLootItem(name) {
 
 function buildLoot(archetype, tier) {
   const lootData = DATA_CACHE.loot;
-  const coinRange = lootData.coins[String(tier)];
+  if (!lootData || !lootData.coins) {
+    return {
+      coins: { pp: 0, gp: randInt(0, 10), ep: 0, sp: randInt(0, 20), cp: randInt(0, 20) },
+      items: []
+    };
+  }
+
+  const coinRange = lootData.coins[String(tier)] || { gp: [0, 10], sp: [0, 20] };
 
   const coins = {
     pp: 0,
@@ -508,9 +593,15 @@ function buildLoot(archetype, tier) {
   };
 
   const items = [];
-  items.push(pickRandom(lootData.commonItems));
-  if (chance(0.6)) items.push(pickRandom(lootData.tables[archetype.lootTable]));
-  if (tier >= 2 && chance(0.4)) items.push(pickRandom(lootData.specialItems));
+  if (Array.isArray(lootData.commonItems) && lootData.commonItems.length) {
+    items.push(pickRandom(lootData.commonItems));
+  }
+  if (lootData.tables?.[archetype.lootTable]?.length && chance(0.6)) {
+    items.push(pickRandom(lootData.tables[archetype.lootTable]));
+  }
+  if (tier >= 2 && Array.isArray(lootData.specialItems) && lootData.specialItems.length && chance(0.4)) {
+    items.push(pickRandom(lootData.specialItems));
+  }
 
   return { coins, items };
 }
@@ -683,16 +774,18 @@ async function buildRoleItems(npc) {
   const tags = npc.archetype.tags || [];
   const style = npc.archetype.attackStyle;
   const out = [];
+  const added = new Set();
+  const packs = getPacks("weapons").concat(getPacks("loot"));
 
   const armor = await getArmorItemByStyle(style, tags);
-  if (armor) out.push(cloneItemData(toItemData(armor)));
+  if (armor) addUniqueItem(out, added, cloneItemData(toItemData(armor)));
   if (!armor) {
     const cachedArmor = getRandomCachedDocByKeywords(
-      getPacks("weapons").concat(getPacks("loot")),
+      packs,
       ["armor", "shield", "mail", "leather"],
       (doc) => (doc.type === "equipment" || doc.type === "armor") && isAllowedItemDoc(doc)
     );
-    if (cachedArmor) out.push(cloneItemData(cachedArmor));
+    if (cachedArmor) addUniqueItem(out, added, cloneItemData(cachedArmor));
   }
 
   const className = getClassForArchetype(npc.archetype);
@@ -708,27 +801,87 @@ async function buildRoleItems(npc) {
   if (tags.includes("holy")) equipmentKeywords.push("holy", "symbol", "prayer");
   if (tags.includes("dark")) equipmentKeywords.push("hood", "poison");
 
-  const picked = await getRandomItemByKeywords(
-    getPacks("weapons").concat(getPacks("loot")),
-    equipmentKeywords,
-    (entry) =>
-      (entry.type === "equipment" || entry.type === "loot" || entry.type === "consumable") &&
-      isAllowedItemEntry(entry)
-  );
-
-  if (picked) out.push(cloneItemData(toItemData(picked)));
-  if (!picked) {
-    const cachedPicked = getRandomCachedDocByKeywords(
-      getPacks("weapons").concat(getPacks("loot")),
-      equipmentKeywords,
+  const desiredCount = getRoleItemCount(npc.tier, npc.importantNpc);
+  const pools = buildEquipmentKeywordPools(style, tags, className);
+  const picks = pickRandomN(pools, desiredCount);
+  for (const keywords of picks) {
+    const item = await pickItemFromKeywords(
+      packs,
+      keywords,
+      (entry) =>
+        (entry.type === "equipment" || entry.type === "loot" || entry.type === "consumable") &&
+        isAllowedItemEntry(entry),
       (doc) =>
         (doc.type === "equipment" || doc.type === "loot" || doc.type === "consumable") &&
         isAllowedItemDoc(doc)
     );
-    if (cachedPicked) out.push(cloneItemData(cachedPicked));
+    if (item) addUniqueItem(out, added, item);
+  }
+
+  // Extra class-flavored pick as a fallback for variety.
+  if (equipmentKeywords.length) {
+    const picked = await pickItemFromKeywords(
+      packs,
+      equipmentKeywords,
+      (entry) =>
+        (entry.type === "equipment" || entry.type === "loot" || entry.type === "consumable") &&
+        isAllowedItemEntry(entry),
+      (doc) =>
+        (doc.type === "equipment" || doc.type === "loot" || doc.type === "consumable") &&
+        isAllowedItemDoc(doc)
+    );
+    if (picked) addUniqueItem(out, added, picked);
   }
 
   return out;
+}
+
+function getRoleItemCount(tier, importantNpc) {
+  let count = 1;
+  if (tier >= 2) count += 1;
+  if (tier >= 3) count += 1;
+  if (importantNpc) count += 1;
+  return Math.min(4, Math.max(1, count));
+}
+
+function buildEquipmentKeywordPools(style, tags, className) {
+  const pools = [];
+  pools.push(getClassEquipmentKeywords(className));
+
+  if (style === "melee") pools.push(["shield", "buckler"]);
+  if (style === "ranged") pools.push(["arrows", "bolts", "quiver"]);
+  if (style === "mixed") pools.push(["dagger", "shortsword", "handaxe"]);
+  if (style === "caster") pools.push(["component", "focus", "spellbook", "wand", "staff"]);
+
+  if (tags.includes("criminal")) pools.push(["thieves' tools", "lockpick", "crowbar", "disguise"]);
+  if (tags.includes("wilderness")) pools.push(["rope", "rations", "torch", "bedroll", "waterskin"]);
+  if (tags.includes("social")) pools.push(["fine clothes", "instrument", "signet", "perfume"]);
+  if (tags.includes("holy")) pools.push(["holy symbol", "censer", "prayer", "reliquary"]);
+  if (tags.includes("dark")) pools.push(["poison", "antitoxin", "hood", "mask"]);
+
+  pools.push(["backpack", "pouch", "satchel"]);
+  pools.push(["healer's kit", "bandage", "salve"]);
+  pools.push(["oil", "lantern", "flask", "candle"]);
+  pools.push(["chalk", "mirror", "bell", "whistle"]);
+  pools.push(["grappling hook", "crowbar", "hammer", "piton"]);
+
+  return pools.filter((p) => p && p.length);
+}
+
+async function pickItemFromKeywords(packs, keywords, entryPredicate, docPredicate) {
+  const picked = await getRandomItemByKeywords(packs, keywords, entryPredicate);
+  if (picked) return cloneItemData(toItemData(picked));
+  const cached = getRandomCachedDocByKeywords(packs, keywords, docPredicate);
+  if (cached) return cloneItemData(cached);
+  return null;
+}
+
+function addUniqueItem(out, added, item) {
+  if (!item) return;
+  const name = String(item.name || "").trim().toLowerCase();
+  if (!name || added.has(name)) return;
+  added.add(name);
+  out.push(item);
 }
 
 function getWeaponKeywords(style, tags) {
@@ -1001,22 +1154,45 @@ function buildBasicAbilityActivities(name, activationType = "action") {
   };
 }
 
-function isAllowedItemEntry(entry) {
+function isAllowedItemEntry(entry, allowMagic = false) {
   const rarity = String(entry.system?.rarity || "").toLowerCase();
   const properties = entry.system?.properties || [];
   const isMagical = Array.isArray(properties) && properties.includes("mgc");
-  if (isMagical) return false;
-  if (rarity && rarity !== "none") return false;
+  if (rarity === "artifact") return false;
+  if (!allowMagic) {
+    if (isMagical) return false;
+    if (rarity && rarity !== "none") return false;
+  }
   return true;
 }
 
-function isAllowedItemDoc(doc) {
+function isAllowedItemDoc(doc, allowMagic = false) {
   const rarity = String(doc.system?.rarity || "").toLowerCase();
   const properties = doc.system?.properties || [];
   const isMagical = Array.isArray(properties) && properties.includes("mgc");
-  if (isMagical) return false;
-  if (rarity && rarity !== "none") return false;
+  if (rarity === "artifact") return false;
+  if (!allowMagic) {
+    if (isMagical) return false;
+    if (rarity && rarity !== "none") return false;
+  }
   return true;
+}
+
+function shouldAllowMagicItem(npc) {
+  if (!npc) return false;
+  if (npc.importantNpc) return chance(0.5);
+  switch (npc.tier) {
+    case 1:
+      return chance(0.02);
+    case 2:
+      return chance(0.05);
+    case 3:
+      return chance(0.1);
+    case 4:
+      return chance(0.2);
+    default:
+      return false;
+  }
 }
 
 function applyTierToAbilities(abilities, tier, importantNpc) {
