@@ -11,7 +11,10 @@
       "Tess", "Vale", "Wren", "Zeke", "Adel", "Briar", "Cyr", "Della", "Eamon", "Faris", "Greta", "Hale",
       "Ilia", "Jax", "Kira", "Liora", "Merek", "Nikol", "Orla", "Perr", "Rika", "Soren", "Talia", "Vika",
       "Alec", "Bea", "Cyrus", "Del", "Erin", "Finn", "Gio", "Hana", "Iain", "Jo", "Kellan", "Lea",
-      "Mason", "Nell", "Olia", "Perrin", "Quill", "Rhea", "Silas", "Tamsin", "Ulric", "Veda", "Wyatt", "Zora"
+      "Mason", "Nell", "Olia", "Perrin", "Quill", "Rhea", "Silas", "Tamsin", "Ulric", "Veda", "Wyatt", "Zora",
+      "Avery", "Benson", "Clara", "Dorian", "Eloise", "Felix", "Giselle", "Holden", "Inez", "Jasper",
+      "Keira", "Logan", "Mirae", "Nico", "Odette", "Perry", "Quentin", "Rhea", "Soren", "Tobin",
+      "Uma", "Vera", "Wylie", "Xander", "Yvette", "Zane"
     ],
     "nordic": [
       "Asgeir", "Brynja", "Eirik", "Hilda", "Kjell", "Sigrid",
@@ -21,7 +24,9 @@
       "Liv", "Rolf", "Birgit", "Odin", "Rune", "Thyra", "Sigurd", "Frode", "Knut", "Solveig",
       "Hild", "Eira", "Eystein", "Hrafn", "Jorun", "Kelda", "Magne", "Oskar", "Ragna", "Torild",
       "Ase", "Bodil", "Eldar", "Gerta", "Haldor", "Ingrid", "Jari", "Kalle", "Lotta", "Mika",
-      "Norne", "Orvar", "Petra", "Ragnhild", "Stig", "Tormod", "Ulva", "Vidar", "Yngvar", "Astr"
+      "Norne", "Orvar", "Petra", "Ragnhild", "Stig", "Tormod", "Ulva", "Vidar", "Yngvar", "Astr",
+      "Alva", "Bryn", "Eli", "Hilda", "Isak", "Kari", "Lars", "Maja", "Nils", "Ola",
+      "Runa", "Sven", "Tove", "Ulla", "Viggo", "Ylva", "Åsa", "Bjarne", "Dag", "Einar"
     ],
     "desert": [
       "Azim", "Farah", "Jalil", "Nadia", "Rashad", "Zara",
@@ -31,7 +36,9 @@
       "Karim", "Latif", "Muna", "Naseem", "Omar", "Pari", "Qasim", "Rafi",
       "Salim", "Talia", "Umar", "Wadi", "Yumna", "Zaki", "Zulema", "Amal", "Hanan", "Saif",
       "Ayaan", "Bari", "Dinar", "Ehsan", "Fawzi", "Ghazi", "Hasan", "Ilyas", "Jalal", "Kadir",
-      "Lina", "Munir", "Nuri", "Qamar", "Rashid", "Sahir", "Tahir", "Waleed", "Yusuf", "Zein"
+      "Lina", "Munir", "Nuri", "Qamar", "Rashid", "Sahir", "Tahir", "Waleed", "Yusuf", "Zein",
+      "Afra", "Basir", "Dawud", "Esma", "Fadila", "Husam", "Iman", "Kamil", "Layla", "Mazin",
+      "Nura", "Odeh", "Qadri", "Rafiq", "Samira", "Tawfiq", "Widad", "Yazan", "Zahira", "Zayd"
     ],
     "eastern": [
       "Hiro", "Kana", "Ren", "Sora", "Takao", "Yumi",
@@ -40,7 +47,9 @@
       "Aiko", "Chiyo", "Daisuke", "Eiko", "Fumi", "Gen", "Haruto", "Itsu",
       "Junko", "Kaito", "Mei", "Naoki", "Renji", "Sachi", "Tomo", "Yuki",
       "Zan", "Kiyu", "Rina", "Suzu", "Hoshi", "Taro", "Miko", "Sada", "Tetsu", "Yuta",
-      "Haru", "Ito", "Kiri", "Masa", "Nobu", "Ryo", "Sato", "Taku", "Yori", "Zumi"
+      "Haru", "Ito", "Kiri", "Masa", "Nobu", "Ryo", "Sato", "Taku", "Yori", "Zumi",
+      "Atsu", "Fuyu", "Hina", "Itsuki", "Kazu", "Mio", "Nao", "Rin", "Shiro", "Toru",
+      "Yoru", "Zen", "Akio", "Keiko", "Maki", "Noriko", "Ryota", "Sora", "Takumi", "Yui"
     ],
     "wild": [
       "Kara", "Rook", "Shade", "Vera", "Jett", "Fenn",
@@ -49,7 +58,9 @@
       "Aster", "Bracken", "Cinder", "Drift", "Echo", "Fable", "Grit", "Hawk",
       "Ivory", "Jasper", "Kite", "Lumen", "Mara", "Nox", "Onyx", "Pyre",
       "Quill", "Rift", "Rune", "Skye", "Talon", "Vale", "Wisp", "Zeph",
-      "Bramble", "Cairn", "Frost", "Glen", "Hollow", "Isen", "Jade", "Koa", "Lynx", "Mire"
+      "Bramble", "Cairn", "Frost", "Glen", "Hollow", "Isen", "Jade", "Koa", "Lynx", "Mire",
+      "Cove", "Dale", "Ember", "Flint", "Gale", "Hush", "Ivy", "Jinx", "Keen", "Lark",
+      "Moth", "Nettle", "Omen", "Pike", "Ridge", "Sprig", "Thicket", "Vex", "Wren", "Yew"
     ]
   },
   "surnames": [
@@ -63,13 +74,17 @@
     "Fallow", "Grimsby", "Harrow", "Isen", "Jarl", "Korrin", "Locke", "Mourn", "Norvale", "Oakley",
     "Pinehurst", "Quarry", "Rook", "Seaborn", "Thornfield", "Umberley", "Valcrest", "Windmere", "Yarrow", "Zale",
     "Blackbriar", "Crowsbane", "Drakewell", "Eagleton", "Farrows", "Gallow", "Highridge", "Ivoryn", "Jaspern", "Kold",
-    "Lynwood", "Mossley", "Nettle", "Oxbury", "Pryce", "Quickwater", "Ravenwood", "Stonefall", "Tallow", "Underwood"
+    "Lynwood", "Mossley", "Nettle", "Oxbury", "Pryce", "Quickwater", "Ravenwood", "Stonefall", "Tallow", "Underwood",
+    "Ashen", "Briarwood", "Coldwyn", "Dunridge", "Ebon", "Fairwind", "Goldmere", "Hightower", "Iverson", "Juniper",
+    "Kirk", "Langford", "Mournfell", "Northwatch", "Oakhurst", "Pell", "Quickwell", "Rooke", "Stormwatch", "Talloway",
+    "Underhill", "Valemont", "Westfall", "Yarroway", "Zorland", "Alder", "Blackstone", "Crowhurst", "Deepwell", "Emberfall"
   ],
   "titles": [
     "Ser", "Captain", "Master", "Sister", "Brother", "Mistress", "Scholar", "Warden", "Judge", "Keeper",
     "Sir", "Lady", "Dame", "Marshal", "Provost", "Magister", "Prelate", "Seeker", "Sentinel", "Steward",
     "Baron", "Baroness", "Count", "Countess", "Duke", "Duchess", "Elder", "High Priest", "Archivist", "Ranger",
     "Commander", "Guildmaster", "Artificer", "Admiral", "Chancellor", "Justiciar", "Inquisitor", "Knight", "Vicar", "Inspector",
-    "Warlord", "Matron", "Patron", "Prefect", "Herald", "Custodian", "Champion", "Harbormaster", "Sheriff", "Magus"
+    "Warlord", "Matron", "Patron", "Prefect", "Herald", "Custodian", "Champion", "Harbormaster", "Sheriff", "Magus",
+    "Constable", "Oracle", "Seer", "Speaker", "Emissary", "Viceroy", "Praetor", "Justicar", "Chronicler", "Quartermaster"
   ]
 }
