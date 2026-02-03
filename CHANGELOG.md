@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.11
 - Race selection from compendiums with applied racial features
 - Randomized token silhouettes (20 SVG set) with archetype mapping
 - Better species compendium detection (supports dnd5e.races + laaru packs)
