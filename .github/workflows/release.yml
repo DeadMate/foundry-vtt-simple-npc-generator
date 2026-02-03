@@ -27,7 +27,7 @@ jobs:
       - name: Extract release notes
         id: notes
         run: |
-          node -e "const fs=require('fs'); const v=process.env.VERSION; const text=fs.readFileSync('CHANGELOG.md','utf8'); const re=new RegExp('^##\\s+'+v+'\\s*$','m'); const start=text.search(re); if(start<0){throw new Error('Changelog missing version '+v);} const slice=text.slice(start); const end=slice.search(/^##\s+/m); const notes=(end>0?slice.slice(0,end):slice).trim(); fs.writeFileSync('RELEASE_NOTES.md', notes + '\n');";
+          node -e "const fs=require('fs'); const v=process.env.VERSION; const text=fs.readFileSync('CHANGELOG.md','utf8'); const re=new RegExp('^##\\\\s+'+v+'\\\\s*$','m'); let start=text.search(re); if(start<0){const first=text.search(/^##\\s+/m); if(first<0){throw new Error('Changelog has no version sections');} start=first;} const slice=text.slice(start); const end=slice.slice(1).search(/^##\\s+/m); const notes=(end>0?slice.slice(0,end+1):slice).trim(); fs.writeFileSync('RELEASE_NOTES.md', notes + '\\n');";
         env:
           VERSION: ${{ steps.bump.outputs.version }}
 
