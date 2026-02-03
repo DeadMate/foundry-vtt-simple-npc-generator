@@ -23,6 +23,9 @@ jobs:
           node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2));"
           VERSION=$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('module.json','utf8')); console.log(data.version);")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          node -e "const fs=require('fs'); const v=process.env.VERSION; const path='CHANGELOG.md'; if(!fs.existsSync(path)){fs.writeFileSync(path, '# Changelog\\n\\n## '+v+'\\n- Automated release\\n\\n'); process.exit(0);} const text=fs.readFileSync(path,'utf8'); const re=/^##\\s+([0-9]+\\.[0-9]+\\.[0-9]+)\\s*$/m; const m=text.match(re); if(!m){fs.writeFileSync(path, `# Changelog\\n\\n## ${v}\\n- Automated release\\n\\n` + text.replace(/^#\\s*Changelog\\s*\\n*/i,'')); process.exit(0);} const current=m[1]; if(current===v) process.exit(0); const updated=text.replace(re, `## ${v}`); fs.writeFileSync(path, updated);"
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
 
       - name: Extract release notes
         id: notes
@@ -35,7 +38,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add module.json
+          git add module.json CHANGELOG.md
           git commit -m "chore: bump version to v${{ steps.bump.outputs.version }} [skip ci]"
           git push
 
