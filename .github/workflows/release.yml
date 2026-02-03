@@ -17,14 +17,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect module changes
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -E "^(module\\.json|scripts/|data/|assets/)" >/dev/null; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip release (no module changes)
+        if: steps.changes.outputs.changed != 'true'
+        run: echo "No module files changed. Skipping release."
+
       - name: Bump version (patch)
         id: bump
+        if: steps.changes.outputs.changed == 'true'
         run: |
           node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2));"
           VERSION=$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('module.json','utf8')); console.log(data.version);")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Ensure changelog section
+        if: steps.changes.outputs.changed == 'true'
         run: |
           node <<'NODE'
           const fs = require('fs');
@@ -75,12 +92,14 @@ jobs:
 
       - name: Extract release notes
         id: notes
+        if: steps.changes.outputs.changed == 'true'
         run: |
           node -e "const fs=require('fs'); const v=process.env.VERSION; const text=fs.readFileSync('CHANGELOG.md','utf8'); const re=new RegExp('^##\\\\s+'+v+'\\\\s*$','m'); const start=text.search(re); if(start<0){throw new Error('Changelog missing version '+v);} const slice=text.slice(start); const end=slice.slice(1).search(/^##\\s+/m); const notes=(end>0?slice.slice(0,end+1):slice).trim(); fs.writeFileSync('RELEASE_NOTES.md', notes + '\\n');";
         env:
           VERSION: ${{ steps.bump.outputs.version }}
 
       - name: Commit version bump
+        if: steps.changes.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -89,10 +108,12 @@ jobs:
           git push
 
       - name: Create module.zip
+        if: steps.changes.outputs.changed == 'true'
         run: |
           zip -r module.zip module.json README.md scripts data CHANGELOG.md -x "data/compendium-cache.json"
 
       - name: Create GitHub Release
+        if: steps.changes.outputs.changed == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.bump.outputs.version }}
@@ -103,6 +124,7 @@ jobs:
             module.zip
 
       - name: Publish to Foundry
+        if: steps.changes.outputs.changed == 'true'
         env:
           FOUNDRY_RELEASE_TOKEN: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}
         run: |
