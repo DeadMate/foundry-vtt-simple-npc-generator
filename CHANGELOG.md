@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.19
 - Expand spell packs to include custom compendiums
 - Increase spell counts for caster NPCs by tier
 
