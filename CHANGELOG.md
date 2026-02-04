@@ -1,7 +1,10 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Speed up bulk NPC creation by batching actor creation
+- Improve species search ordering and selection behavior
+- Remember last NPC options (tier/budget/archetype/culture + toggles)
+- Show update changelog to GM only, with "don't show again" option
 
 ## 0.1.15
 - Prevent race conditions during data load

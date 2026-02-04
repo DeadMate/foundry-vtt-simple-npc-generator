@@ -174,12 +174,25 @@ Hooks.once("init", () => {
     type: String,
     default: ""
   });
+  game.settings.register(MODULE_ID, "lastNpcOptions", {
+    scope: "client",
+    config: false,
+    type: String,
+    default: ""
+  });
+  game.settings.register(MODULE_ID, "lastSeenVersion", {
+    scope: "client",
+    config: false,
+    type: String,
+    default: ""
+  });
 });
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "dnd5e") {
     ui.notifications?.warn("NPC Button (D&D 5e) is designed for the dnd5e system.");
   }
+  showChangelogIfUpdated();
 });
 
 Hooks.on("renderActorDirectory", (app, html) => {
@@ -225,6 +238,84 @@ function getLastSpeciesKey() {
 function setLastSpeciesKey(value) {
   if (!game.settings) return;
   game.settings.set(MODULE_ID, "lastSpeciesKey", value || "");
+}
+
+function getLastNpcOptions() {
+  const raw = game.settings?.get(MODULE_ID, "lastNpcOptions");
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setLastNpcOptions(options) {
+  if (!game.settings) return;
+  try {
+    const payload = options ? JSON.stringify(options) : "";
+    game.settings.set(MODULE_ID, "lastNpcOptions", payload);
+  } catch {
+    game.settings.set(MODULE_ID, "lastNpcOptions", "");
+  }
+}
+
+async function showChangelogIfUpdated() {
+  if (!game.user?.isGM) return;
+  const version = game.modules?.get(MODULE_ID)?.version;
+  if (!version) return;
+  const lastSeen = game.settings?.get(MODULE_ID, "lastSeenVersion") || "";
+  if (lastSeen === version) return;
+
+  const notes = await loadChangelogNotes(version);
+  if (!notes?.length) return;
+
+  const content = `
+    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+      <div style="font-weight: 600;">What's new in v${version}</div>
+      <ul style="margin: 0; padding-left: 1.25rem;">
+        ${notes.map((line) => `<li>${line}</li>`).join("")}
+      </ul>
+    </div>
+  `;
+
+  new Dialog({
+    title: "NPC Button updated",
+    content,
+    buttons: {
+      dismiss: {
+        label: "Don't show until next update",
+        callback: () => {
+          game.settings?.set(MODULE_ID, "lastSeenVersion", version);
+        }
+      }
+    },
+    default: "dismiss"
+  }).render(true);
+}
+
+async function loadChangelogNotes(version) {
+  try {
+    const response = await fetch(`modules/${MODULE_ID}/CHANGELOG.md`);
+    if (!response.ok) return null;
+    const text = await response.text();
+    const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const sectionMatch = text.match(
+      new RegExp(`^##\\s+${escaped}\\s*$([\\s\\S]*?)(?=^##\\s+|\\Z)`, "m")
+    );
+    if (!sectionMatch) return null;
+    const sectionText = sectionMatch[1] || "";
+    const bullets = sectionText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.replace(/^-\\s+/, "").trim())
+      .filter(Boolean);
+    return bullets.length ? bullets : null;
+  } catch {
+    return null;
+  }
 }
 
 function addNpcButton(html) {
@@ -291,6 +382,7 @@ async function openNpcDialog() {
   const lastFolder = getLastFolderId();
   const speciesOptions = await getSpeciesOptions();
   const lastSpeciesKey = getLastSpeciesKey();
+  const lastOptions = getLastNpcOptions();
 
   const content = `
     <form>
@@ -370,7 +462,7 @@ async function openNpcDialog() {
           <label class="checkbox"><input type="checkbox" name="includeLoot" checked> Loot</label>
           <label class="checkbox"><input type="checkbox" name="includeSecret" checked> Secret</label>
           <label class="checkbox"><input type="checkbox" name="includeHook" checked> Quest hook</label>
-          <label class="checkbox"><input type="checkbox" name="importantNpc"> Important NPC</label>
+          <label class="checkbox"><input type="checkbox" name="importantNpc"> Boss</label>
         </div>
       </div>
     </form>
@@ -381,7 +473,7 @@ async function openNpcDialog() {
     content,
     buttons: {
       cache: {
-        label: "Build Compendium Cache",
+        label: "Build Cache",
         callback: async () => {
           await buildCompendiumCache();
         }
@@ -405,23 +497,74 @@ async function openNpcDialog() {
       if (lastSpeciesKey) {
         form.find("select[name='species']").val(lastSpeciesKey);
       }
+      if (lastOptions) {
+        if (lastOptions.tier) form.find("select[name='tier']").val(String(lastOptions.tier));
+        if (lastOptions.budget) form.find("select[name='budget']").val(String(lastOptions.budget));
+        if (lastOptions.culture) form.find("select[name='culture']").val(String(lastOptions.culture));
+        if (lastOptions.archetype) form.find("select[name='archetype']").val(String(lastOptions.archetype));
+        if (typeof lastOptions.includeLoot === "boolean") {
+          form.find("input[name='includeLoot']").prop("checked", lastOptions.includeLoot);
+        }
+        if (typeof lastOptions.includeSecret === "boolean") {
+          form.find("input[name='includeSecret']").prop("checked", lastOptions.includeSecret);
+        }
+        if (typeof lastOptions.includeHook === "boolean") {
+          form.find("input[name='includeHook']").prop("checked", lastOptions.includeHook);
+        }
+        if (typeof lastOptions.importantNpc === "boolean") {
+          form.find("input[name='importantNpc']").prop("checked", lastOptions.importantNpc);
+        }
+      }
       const speciesSearch = form.find("input[name='speciesSearch']");
       const speciesSelect = form.find("select[name='species']");
       const allOptions = speciesSelect.find("option").toArray();
       speciesSearch.on("input", () => {
         const q = String(speciesSearch.val() || "").trim().toLowerCase();
+        const currentValue = String(speciesSelect.val() || "");
         speciesSelect.empty();
-        let firstMatch = null;
+
+        const startsWith = [];
+        const wordStart = [];
+        const contains = [];
+        let randomOpt = null;
+
         for (const opt of allOptions) {
-          const text = opt.textContent || "";
-          if (!q || text.toLowerCase().includes(q) || opt.value === "random") {
-            speciesSelect.append(opt);
-            if (!firstMatch && opt.value !== "random") firstMatch = opt;
+          if (opt.value === "random") {
+            randomOpt = opt;
+            continue;
+          }
+          const text = (opt.textContent || "").toLowerCase();
+          if (!q) {
+            contains.push(opt);
+            continue;
+          }
+          if (text.startsWith(q)) {
+            startsWith.push(opt);
+            continue;
+          }
+          if (text.split(/\s+/).some((part) => part.startsWith(q))) {
+            wordStart.push(opt);
+            continue;
+          }
+          if (text.includes(q)) {
+            contains.push(opt);
           }
         }
-        if (firstMatch) {
-          speciesSelect.val(firstMatch.value);
-        } else if (!q) {
+
+        if (randomOpt) speciesSelect.append(randomOpt);
+        for (const opt of startsWith.concat(wordStart, contains)) {
+          speciesSelect.append(opt);
+        }
+
+        const stillExists = currentValue && speciesSelect.find(`option[value="${currentValue}"]`).length;
+        const hasMatches = startsWith.length || wordStart.length || contains.length;
+        if (stillExists && currentValue !== "random") {
+          speciesSelect.val(currentValue);
+        } else if (hasMatches) {
+          speciesSelect.val((startsWith[0] || wordStart[0] || contains[0]).value);
+        } else if (startsWith.length || wordStart.length || contains.length) {
+          speciesSelect.val((startsWith[0] || wordStart[0] || contains[0]).value);
+        } else if (!q && randomOpt) {
           speciesSelect.val("random");
         }
       });
@@ -451,6 +594,16 @@ async function createNpcFromForm(formData) {
   const archetypeInput = formData.get("archetype");
   const folderId = String(formData.get("folder") || "").trim() || null;
   setLastFolderId(folderId);
+  setLastNpcOptions({
+    tier: String(tierInput || "auto"),
+    budget: String(formData.get("budget") || "normal"),
+    culture: String(cultureInput || "random"),
+    archetype: String(archetypeInput || "random"),
+    includeLoot: formData.get("includeLoot") === "on",
+    includeSecret: formData.get("includeSecret") === "on",
+    includeHook: formData.get("includeHook") === "on",
+    importantNpc: formData.get("importantNpc") === "on"
+  });
   const countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
   const budgetInput = String(formData.get("budget") || "normal");
   const speciesKeyInput = String(formData.get("species") || "random");
@@ -471,7 +624,7 @@ async function createNpcFromForm(formData) {
   const includeHook = formData.get("includeHook") === "on";
   const importantNpc = formData.get("importantNpc") === "on";
 
-  const created = [];
+  const planned = [];
   for (let i = 0; i < countInput; i++) {
     const archetype =
       archetypeInput === "random"
@@ -500,21 +653,31 @@ async function createNpcFromForm(formData) {
       importantNpc
     });
 
-    const actorData = await buildActorData(generated, folderId);
-    const actor = await Actor.create(actorData);
-    if (speciesEntry) {
-      const speciesItem = await buildSpeciesItem(speciesEntry);
-      if (speciesItem) {
-        const created = await actor.createEmbeddedDocuments("Item", [speciesItem]);
-        const createdItem = created?.[0] || null;
-        if (createdItem) {
-          await actor.updateSource({ "system.details.race": createdItem.id });
-          await applySpeciesTraitsToActor(actor, createdItem);
-          await applySpeciesAdvancements(actor, createdItem);
-        }
-      }
-    }
-    created.push(actor);
+    planned.push({ generated, speciesEntry });
+  }
+
+  const actorDataList = await Promise.all(
+    planned.map((entry) => buildActorData(entry.generated, folderId))
+  );
+
+  const created =
+    typeof Actor.createDocuments === "function"
+      ? await Actor.createDocuments(actorDataList)
+      : await Promise.all(actorDataList.map((data) => Actor.create(data)));
+
+  for (let i = 0; i < created.length; i++) {
+    const actor = created[i];
+    const speciesEntry = planned[i]?.speciesEntry || null;
+    if (!actor || !speciesEntry) continue;
+
+    const speciesItem = await buildSpeciesItem(speciesEntry);
+    if (!speciesItem) continue;
+    const createdItems = await actor.createEmbeddedDocuments("Item", [speciesItem]);
+    const createdItem = createdItems?.[0] || null;
+    if (!createdItem) continue;
+    await actor.updateSource({ "system.details.race": createdItem.id });
+    await applySpeciesTraitsToActor(actor, createdItem);
+    await applySpeciesAdvancements(actor, createdItem);
   }
 
   if (created.length === 1) {
