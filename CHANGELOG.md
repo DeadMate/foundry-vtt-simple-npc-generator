@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- None.
 
 ## 0.1.15
 - Prevent race conditions during data load
