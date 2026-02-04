@@ -1,7 +1,15 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Encounter tab with auto-balanced count/tier and Encounter-N folders
+- Encounter race search with same filtering as main race picker
+- Encounter archetype selector (single pick or random)
+- Dialog layout cleanup (tabs, spacing, consistent widths)
+- Create Encounter button label on encounter tab
+- Avoid duplicate names in generated batches
+- Randomize weapons/loot across all compendium packs (bigger variety)
+- Extra random loot by tier/importance
+- Ammo support for bows/crossbows (adds arrows/bolts)
 
 ## 0.1.17
 - Encounter mode with auto-balanced count/tier and Encounter-N folders

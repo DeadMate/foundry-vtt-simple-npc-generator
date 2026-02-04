@@ -983,7 +983,10 @@ async function buildActorData(npc, folderId = null) {
   const skillsData = buildSkillsData(npc.archetype.skills);
 
   const items = [];
-  items.push(await buildWeaponItem(npc));
+  const weaponItem = await buildWeaponItem(npc);
+  items.push(weaponItem);
+  const ammoItem = await buildAmmoItemForWeapon(weaponItem, npc);
+  if (ammoItem) items.push(ammoItem);
   items.push(...(await buildRoleAbilityItems(npc)));
   items.push(...(await buildRoleItems(npc)));
 
@@ -992,6 +995,7 @@ async function buildActorData(npc, folderId = null) {
     for (const name of npc.loot.items) {
       lootItems.push(await buildLootItem(name, npc));
     }
+    lootItems.push(...(await buildRandomLootExtras(npc, lootItems)));
     items.push(...lootItems);
   }
 
@@ -1069,13 +1073,13 @@ async function buildWeaponItem(npc) {
   const weaponPacks = getPacks("weapons");
   const budget = npc.budget || "normal";
   const compendiumWeapon =
-    (await getRandomItemByKeywordsWithBudget(
+    (await getRandomItemByKeywordsFromAllPacksWithBudget(
       weaponPacks,
       weaponKeywords,
       (entry) => (entry.type === "weapon" || entry.type === "equipment") && isAllowedItemEntry(entry),
       budget
     )) ||
-    (await getRandomItemFromPacksWithBudget(
+    (await getRandomItemFromAllPacksWithBudget(
       weaponPacks,
       (entry) => entry.type === "weapon" && isAllowedItemEntry(entry),
       budget
@@ -1158,7 +1162,7 @@ async function buildLootItem(name, npc) {
     return lootData;
   }
 
-  const compendiumLoot = await getRandomItemFromPacksWithBudget(
+  const compendiumLoot = await getRandomItemFromAllPacksWithBudget(
     lootPacks,
     (entry) =>
       (entry.type === "loot" || entry.type === "consumable" || entry.type === "equipment") &&
@@ -1207,6 +1211,103 @@ async function buildLootItem(name, npc) {
       consumableType: isPotion ? "potion" : "" 
     }
   };
+}
+
+async function buildAmmoItemForWeapon(weaponItem, npc) {
+  if (!weaponItem) return null;
+  const name = String(weaponItem.name || "").toLowerCase();
+  const props = weaponItem.system?.properties || [];
+  const isAmmoWeapon = Array.isArray(props) && props.includes("amm");
+  if (!isAmmoWeapon) return null;
+
+  let ammoName = null;
+  let ammoKeywords = [];
+  if (name.includes("crossbow")) ammoName = "Crossbow Bolts";
+  else if (name.includes("bow")) ammoName = "Arrows";
+  if (!ammoName) return null;
+  if (ammoName === "Crossbow Bolts") {
+    ammoKeywords = ["crossbow bolt", "crossbow bolts", "bolt", "bolts"];
+  } else {
+    ammoKeywords = ["arrow", "arrows"];
+  }
+
+  const packs = getPacks("loot").concat(getPacks("weapons") || []);
+  const budget = npc?.budget || "normal";
+  const nameCandidates = ammoName === "Crossbow Bolts"
+    ? [ammoName, "Crossbow Bolt", "Crossbow Bolts (20)", "Bolts"]
+    : [ammoName, "Arrows (20)", "Arrow"];
+  let byName = null;
+  for (const candidate of nameCandidates) {
+    byName = await getItemByNameFromPacks(packs, candidate);
+    if (byName) break;
+  }
+  const picked =
+    (byName && isAllowedItemDoc(byName, true) ? byName : null) ||
+    (await getRandomItemByKeywordsFromAllPacksWithBudget(
+      packs,
+      ammoKeywords,
+      (entry) =>
+        (entry.type === "consumable" || entry.type === "loot" || entry.type === "equipment") &&
+        isAllowedItemEntry(entry, true),
+      budget,
+      true
+    ));
+
+  if (picked) {
+    const data = cloneItemData(toItemData(picked));
+    if (data?.system?.quantity !== undefined) {
+      const qty = name.includes("crossbow") ? 20 : 20;
+      data.system.quantity = qty;
+    }
+    return data;
+  }
+
+  return {
+    name: ammoName,
+    type: "consumable",
+    system: { quantity: 20, description: { value: "" }, consumableType: "" }
+  };
+}
+
+async function buildRandomLootExtras(npc, existingItems = []) {
+  const allowMagic = shouldAllowMagicItem(npc);
+  const budget = npc?.budget || "normal";
+  const lootPacks = getPacks("loot");
+  let extraCount = 0;
+  if (npc.tier >= 3) extraCount = 2;
+  else if (npc.tier >= 2) extraCount = 1;
+  if (npc.importantNpc) extraCount += 1;
+  if (extraCount <= 0) return [];
+
+  const used = new Set(
+    existingItems
+      .map((i) => String(i?.name || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const extras = [];
+  for (let i = 0; i < extraCount; i++) {
+    const item = await getRandomItemFromAllPacksWithBudget(
+      lootPacks,
+      (entry) => {
+        const name = String(entry.name || "").trim().toLowerCase();
+        if (name && used.has(name)) return false;
+        return (
+          (entry.type === "loot" || entry.type === "consumable" || entry.type === "equipment") &&
+          isAllowedItemEntry(entry, allowMagic)
+        );
+      },
+      budget,
+      true
+    );
+    if (!item) continue;
+    const data = cloneItemData(toItemData(item));
+    if (data?.name) used.add(String(data.name).trim().toLowerCase());
+    if (data?.system?.quantity !== undefined) data.system.quantity = 1;
+    extras.push(data);
+  }
+
+  return extras;
 }
 
 function getRandomTokenImage() {
@@ -1518,6 +1619,74 @@ async function getRandomItemFromPacksWithBudget(packs, predicate, budget, allowM
     return pack.getDocument(entry._id);
   }
   return null;
+}
+
+async function getRandomItemFromAllPacksWithBudget(packs, predicate, budget, allowMagic = false) {
+  const candidates = [];
+  for (const packName of packs) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+    const index = await getPackIndex(pack, getItemIndexFields());
+    for (const entry of index) {
+      if (predicate && !predicate(entry)) continue;
+      candidates.push({ packName: pack.collection, entry });
+    }
+  }
+  if (!candidates.length) return null;
+
+  const priced = candidates
+    .map((c) => ({ c, price: getPriceFromEntry(c.packName, c.entry) }))
+    .filter((p) => Number.isFinite(p.price));
+
+  const picked = priced.length
+    ? pickByBudget(priced, budget, allowMagic, (p) => p.price)?.c
+    : pickRandom(candidates);
+  if (!picked) return null;
+  return resolveItemFromEntry(picked.packName, picked.entry);
+}
+
+async function getRandomItemByKeywordsFromAllPacksWithBudget(
+  packs,
+  keywords,
+  predicate,
+  budget,
+  allowMagic = false
+) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  const candidates = [];
+  for (const packName of packs) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+    const index = await getPackIndex(pack, getItemIndexFields());
+    for (const entry of index) {
+      if (predicate && !predicate(entry)) continue;
+      if (normalized.length) {
+        const haystack = getEntrySearchStrings(entry);
+        if (!normalized.some((k) => haystack.some((h) => h.includes(k)))) continue;
+      }
+      candidates.push({ packName: pack.collection, entry });
+    }
+  }
+  if (!candidates.length) return null;
+
+  const priced = candidates
+    .map((c) => ({ c, price: getPriceFromEntry(c.packName, c.entry) }))
+    .filter((p) => Number.isFinite(p.price));
+
+  const picked = priced.length
+    ? pickByBudget(priced, budget, allowMagic, (p) => p.price)?.c
+    : pickRandom(candidates);
+  if (!picked) return null;
+  return resolveItemFromEntry(picked.packName, picked.entry);
+}
+
+async function resolveItemFromEntry(packName, entry) {
+  if (!entry || !packName) return null;
+  const cached = getCachedDoc(packName, entry._id);
+  if (cached) return cached;
+  const pack = game.packs?.get(packName);
+  if (!pack) return null;
+  return pack.getDocument(entry._id);
 }
 
 async function getRandomItemByKeywords(packs, keywords, predicate) {
