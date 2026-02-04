@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.16
 - Speed up bulk NPC creation by batching actor creation
 - Improve species search ordering and selection behavior
 - Remember last NPC options (tier/budget/archetype/culture + toggles)
