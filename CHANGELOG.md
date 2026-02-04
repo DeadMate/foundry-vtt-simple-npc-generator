@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.17
 - Encounter mode with auto-balanced count/tier and Encounter-N folders
 - Encounter tab controls for race and archetype
 - Improved dialog layout and archetype quick-roll button
