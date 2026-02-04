@@ -1,9 +1,6 @@
 # Changelog
 
 ## Unreleased
-- None.
-
-## 0.1.15
 - Prevent race conditions during data load
 - Add safe fallbacks when data lists are empty or missing
 - Warn when required data is missing and fall back gracefully
