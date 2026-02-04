@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.1.18
 - Encounter tab with auto-balanced count/tier and Encounter-N folders
 - Encounter race search with same filtering as main race picker
 - Encounter archetype selector (single pick or random)
