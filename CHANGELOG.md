@@ -1,7 +1,10 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Encounter mode with auto-balanced count/tier and Encounter-N folders
+- Encounter tab controls for race and archetype
+- Improved dialog layout and archetype quick-roll button
+- Avoid duplicate names in generated batches
 
 ## 0.1.16
 - Speed up bulk NPC creation by batching actor creation

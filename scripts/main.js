@@ -261,6 +261,58 @@ function setLastNpcOptions(options) {
   }
 }
 
+function attachSpeciesSearch(searchInput, selectEl, allOptions) {
+  if (!searchInput?.length || !selectEl?.length) return;
+  searchInput.on("input", () => {
+    const q = String(searchInput.val() || "").trim().toLowerCase();
+    const currentValue = String(selectEl.val() || "");
+    selectEl.empty();
+
+    const startsWith = [];
+    const wordStart = [];
+    const contains = [];
+    let randomOpt = null;
+
+    for (const opt of allOptions || []) {
+      if (opt.value === "random") {
+        randomOpt = opt;
+        continue;
+      }
+      const text = (opt.textContent || "").toLowerCase();
+      if (!q) {
+        contains.push(opt);
+        continue;
+      }
+      if (text.startsWith(q)) {
+        startsWith.push(opt);
+        continue;
+      }
+      if (text.split(/\s+/).some((part) => part.startsWith(q))) {
+        wordStart.push(opt);
+        continue;
+      }
+      if (text.includes(q)) {
+        contains.push(opt);
+      }
+    }
+
+    if (randomOpt) selectEl.append(randomOpt);
+    for (const opt of startsWith.concat(wordStart, contains)) {
+      selectEl.append(opt);
+    }
+
+    const stillExists = currentValue && selectEl.find(`option[value="${currentValue}"]`).length;
+    const hasMatches = startsWith.length || wordStart.length || contains.length;
+    if (stillExists && currentValue !== "random") {
+      selectEl.val(currentValue);
+    } else if (hasMatches) {
+      selectEl.val((startsWith[0] || wordStart[0] || contains[0]).value);
+    } else if (!q && randomOpt) {
+      selectEl.val("random");
+    }
+  });
+}
+
 async function showChangelogIfUpdated() {
   if (!game.user?.isGM) return;
   const version = game.modules?.get(MODULE_ID)?.version;
@@ -385,7 +437,23 @@ async function openNpcDialog() {
   const lastOptions = getLastNpcOptions();
 
   const content = `
-    <form>
+    <style>
+      .npc-btn-form { display: flex; flex-direction: column; gap: 0.75rem; }
+      .npc-btn-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+      .npc-btn-tabs button { flex: 1; }
+      .npc-btn-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+      .npc-btn-panel .form-group { margin: 0; }
+      .npc-btn-panel .form-fields { gap: 0.5rem; }
+      .npc-btn-panel .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+      .npc-btn-panel select, .npc-btn-panel input[type="text"], .npc-btn-panel input[type="number"] { width: 100%; }
+    </style>
+    <form class="npc-btn-form">
+      <input type="hidden" name="encounterMode" value="main">
+      <div class="npc-btn-tabs">
+        <button type="button" data-tab="main" class="active">Main</button>
+        <button type="button" data-tab="encounter">Encounter</button>
+      </div>
+      <div data-tab-panel="main" class="npc-btn-panel">
       <div class="form-group">
         <label>Archetype</label>
         <div class="form-fields">
@@ -393,6 +461,7 @@ async function openNpcDialog() {
             <option value="random">Random</option>
             ${options}
           </select>
+          <button type="button" data-action="roll-archetype" title="Pick a random archetype">🎲</button>
         </div>
       </div>
       <div class="form-group">
@@ -432,7 +501,7 @@ async function openNpcDialog() {
       <div class="form-group">
         <label>Race</label>
         <div class="form-fields" style="flex-direction: column; align-items: stretch;">
-          <input type="text" name="speciesSearch" placeholder="Search race..." style="width: 100%; max-width: 100%;" />
+          <input type="text" name="speciesSearch" placeholder="Search race..." />
           <select name="species">
             <option value="random">Random</option>
             ${speciesOptions}
@@ -465,6 +534,56 @@ async function openNpcDialog() {
           <label class="checkbox"><input type="checkbox" name="importantNpc"> Boss</label>
         </div>
       </div>
+      </div>
+      <div data-tab-panel="encounter" class="npc-btn-panel" style="display: none;">
+      <div class="form-group">
+        <label>Encounter</label>
+        <div class="form-fields" style="flex-direction: column; align-items: stretch;">
+          <label style="display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.25rem;">
+            <span style="font-size: 0.85rem;">Encounter race</span>
+            <input type="text" name="encounterSpeciesSearch" placeholder="Search race..." />
+            <select name="encounterSpecies">
+              <option value="random">Random</option>
+              ${speciesOptions}
+            </select>
+          </label>
+          <label style="display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.25rem;">
+            <span style="font-size: 0.85rem;">Encounter archetype</span>
+            <select name="encounterArchetype">
+              <option value="random">Random</option>
+              ${options}
+            </select>
+          </label>
+          <div class="row-2">
+            <label style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <span style="font-size: 0.85rem;">Party level</span>
+              <input type="number" name="partyLevel" value="3" min="1" max="20">
+            </label>
+            <label style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <span style="font-size: 0.85rem;">Party size</span>
+              <input type="number" name="partySize" value="4" min="1" max="8">
+            </label>
+          </div>
+          <label style="display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.25rem;">
+            <span style="font-size: 0.85rem;">Difficulty</span>
+            <select name="encounterDifficulty">
+              <option value="easy">Easy</option>
+              <option value="medium" selected>Medium</option>
+              <option value="hard">Hard</option>
+              <option value="deadly">Deadly</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <div class="form-fields">
+          <p style="margin: 0; font-size: 0.85rem; opacity: 0.8;">
+            Auto-balance adjusts NPC tiers and count, and will place them in the next "Encounter-N" folder.
+          </p>
+        </div>
+      </div>
+      </div>
     </form>
   `;
 
@@ -491,6 +610,26 @@ async function openNpcDialog() {
     default: "create",
     render: (html) => {
       const form = html.find("form");
+      const tabButtons = form.find("[data-tab]");
+      const tabPanels = form.find("[data-tab-panel]");
+      const encounterModeInput = form.find("input[name='encounterMode']");
+      const createButton = html.find("button[data-button='create']");
+      const updateCreateLabel = () => {
+        if (encounterModeInput.val() === "encounter") {
+          createButton.text("Create Encounter");
+        } else {
+          createButton.text("Create NPC");
+        }
+      };
+      tabButtons.on("click", (ev) => {
+        const tab = ev.currentTarget.getAttribute("data-tab");
+        tabButtons.removeClass("active");
+        $(ev.currentTarget).addClass("active");
+        tabPanels.hide();
+        form.find(`[data-tab-panel='${tab}']`).show();
+        encounterModeInput.val(tab);
+        updateCreateLabel();
+      });
       if (lastFolder) {
         form.find("select[name='folder']").val(lastFolder);
       }
@@ -502,6 +641,28 @@ async function openNpcDialog() {
         if (lastOptions.budget) form.find("select[name='budget']").val(String(lastOptions.budget));
         if (lastOptions.culture) form.find("select[name='culture']").val(String(lastOptions.culture));
         if (lastOptions.archetype) form.find("select[name='archetype']").val(String(lastOptions.archetype));
+        if (lastOptions.encounterSpecies) {
+          form.find("select[name='encounterSpecies']").val(String(lastOptions.encounterSpecies));
+        }
+        if (lastOptions.encounterArchetype) {
+          form.find("select[name='encounterArchetype']").val(String(lastOptions.encounterArchetype));
+        }
+        if (lastOptions.partyLevel) form.find("input[name='partyLevel']").val(Number(lastOptions.partyLevel));
+        if (lastOptions.partySize) form.find("input[name='partySize']").val(Number(lastOptions.partySize));
+        if (lastOptions.encounterDifficulty) {
+          form.find("select[name='encounterDifficulty']").val(String(lastOptions.encounterDifficulty));
+        }
+        if (lastOptions.encounterMode) {
+          const tab = String(lastOptions.encounterMode);
+          if (tab === "encounter") {
+            tabButtons.removeClass("active");
+            tabButtons.filter("[data-tab='encounter']").addClass("active");
+            tabPanels.hide();
+            form.find("[data-tab-panel='encounter']").show();
+            encounterModeInput.val("encounter");
+            updateCreateLabel();
+          }
+        }
         if (typeof lastOptions.includeLoot === "boolean") {
           form.find("input[name='includeLoot']").prop("checked", lastOptions.includeLoot);
         }
@@ -518,56 +679,18 @@ async function openNpcDialog() {
       const speciesSearch = form.find("input[name='speciesSearch']");
       const speciesSelect = form.find("select[name='species']");
       const allOptions = speciesSelect.find("option").toArray();
-      speciesSearch.on("input", () => {
-        const q = String(speciesSearch.val() || "").trim().toLowerCase();
-        const currentValue = String(speciesSelect.val() || "");
-        speciesSelect.empty();
-
-        const startsWith = [];
-        const wordStart = [];
-        const contains = [];
-        let randomOpt = null;
-
-        for (const opt of allOptions) {
-          if (opt.value === "random") {
-            randomOpt = opt;
-            continue;
-          }
-          const text = (opt.textContent || "").toLowerCase();
-          if (!q) {
-            contains.push(opt);
-            continue;
-          }
-          if (text.startsWith(q)) {
-            startsWith.push(opt);
-            continue;
-          }
-          if (text.split(/\s+/).some((part) => part.startsWith(q))) {
-            wordStart.push(opt);
-            continue;
-          }
-          if (text.includes(q)) {
-            contains.push(opt);
-          }
-        }
-
-        if (randomOpt) speciesSelect.append(randomOpt);
-        for (const opt of startsWith.concat(wordStart, contains)) {
-          speciesSelect.append(opt);
-        }
-
-        const stillExists = currentValue && speciesSelect.find(`option[value="${currentValue}"]`).length;
-        const hasMatches = startsWith.length || wordStart.length || contains.length;
-        if (stillExists && currentValue !== "random") {
-          speciesSelect.val(currentValue);
-        } else if (hasMatches) {
-          speciesSelect.val((startsWith[0] || wordStart[0] || contains[0]).value);
-        } else if (startsWith.length || wordStart.length || contains.length) {
-          speciesSelect.val((startsWith[0] || wordStart[0] || contains[0]).value);
-        } else if (!q && randomOpt) {
-          speciesSelect.val("random");
-        }
+      const encounterSpeciesSearch = form.find("input[name='encounterSpeciesSearch']");
+      const encounterSpeciesSelect = form.find("select[name='encounterSpecies']");
+      const encounterAllOptions = encounterSpeciesSelect.find("option").toArray();
+      const archetypeSelect = form.find("select[name='archetype']");
+      form.find("[data-action='roll-archetype']").on("click", () => {
+        const opts = archetypeSelect.find("option").toArray().filter((o) => o.value !== "random");
+        if (!opts.length) return;
+        const pick = pickRandom(opts);
+        if (pick) archetypeSelect.val(pick.value);
       });
+      attachSpeciesSearch(speciesSearch, speciesSelect, allOptions);
+      attachSpeciesSearch(encounterSpeciesSearch, encounterSpeciesSelect, encounterAllOptions);
       const input = form.find("input[name='count']");
       const clamp = (val) => Math.max(1, Math.min(50, Number(val) || 1));
       form.find("[data-npc-count='minus']").on("click", () => {
@@ -576,6 +699,24 @@ async function openNpcDialog() {
       form.find("[data-npc-count='plus']").on("click", () => {
         input.val(clamp(Number(input.val()) + 1));
       });
+
+      const partyLevel = form.find("input[name='partyLevel']");
+      const partySize = form.find("input[name='partySize']");
+      const encounterDifficulty = form.find("select[name='encounterDifficulty']");
+      const refreshEncounterCount = () => {
+        if (encounterModeInput.val() !== "encounter") return;
+        const desired = buildEncounterCount({
+          partyLevel: Number(partyLevel.val() || 1),
+          partySize: Number(partySize.val() || 4),
+          difficulty: String(encounterDifficulty.val() || "medium")
+        });
+        input.val(clamp(desired));
+      };
+      partyLevel.on("input", refreshEncounterCount);
+      partySize.on("input", refreshEncounterCount);
+      encounterDifficulty.on("change", refreshEncounterCount);
+      refreshEncounterCount();
+      updateCreateLabel();
     }
   }).render(true);
 }
@@ -592,19 +733,31 @@ async function createNpcFromForm(formData) {
   const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
   const cultureInput = formData.get("culture");
   const archetypeInput = formData.get("archetype");
-  const folderId = String(formData.get("folder") || "").trim() || null;
-  setLastFolderId(folderId);
+  const folderInput = String(formData.get("folder") || "").trim() || null;
+  let folderId = folderInput;
+  const encounterMode = String(formData.get("encounterMode") || "main");
+  const encounterSpeciesKey = String(formData.get("encounterSpecies") || "random");
+  const encounterArchetypeKey = String(formData.get("encounterArchetype") || "random");
+  const partyLevelInput = Number(formData.get("partyLevel") || 3);
+  const partySizeInput = Number(formData.get("partySize") || 4);
+  const encounterDifficulty = String(formData.get("encounterDifficulty") || "medium");
   setLastNpcOptions({
     tier: String(tierInput || "auto"),
     budget: String(formData.get("budget") || "normal"),
     culture: String(cultureInput || "random"),
     archetype: String(archetypeInput || "random"),
+    encounterSpecies: encounterSpeciesKey,
+    encounterArchetype: encounterArchetypeKey,
+    partyLevel: partyLevelInput,
+    partySize: partySizeInput,
+    encounterDifficulty,
+    encounterMode,
     includeLoot: formData.get("includeLoot") === "on",
     includeSecret: formData.get("includeSecret") === "on",
     includeHook: formData.get("includeHook") === "on",
     importantNpc: formData.get("importantNpc") === "on"
   });
-  const countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
+  let countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
   const budgetInput = String(formData.get("budget") || "normal");
   const speciesKeyInput = String(formData.get("species") || "random");
   let speciesList = DATA_CACHE.speciesEntries || [];
@@ -615,6 +768,10 @@ async function createNpcFromForm(formData) {
     speciesKeyInput !== "random"
       ? speciesList.find((entry) => entry.key === speciesKeyInput)
       : null;
+  const fixedEncounterSpecies =
+    encounterSpeciesKey !== "random"
+      ? speciesList.find((entry) => entry.key === encounterSpeciesKey)
+      : null;
   setLastSpeciesKey(fixedSpecies?.key || "");
   if (!fixedSpecies && !speciesList.length) {
     ui.notifications?.warn("NPC Button: No race entries found. Check your compendium packs.");
@@ -622,13 +779,56 @@ async function createNpcFromForm(formData) {
   const includeLoot = formData.get("includeLoot") === "on";
   const includeSecret = formData.get("includeSecret") === "on";
   const includeHook = formData.get("includeHook") === "on";
-  const importantNpc = formData.get("importantNpc") === "on";
+  const manualImportant = formData.get("importantNpc") === "on";
+
+  if (encounterMode === "encounter") {
+    countInput = Math.max(
+      1,
+      Math.min(
+        50,
+        buildEncounterCount({
+          partyLevel: partyLevelInput,
+          partySize: partySizeInput,
+          difficulty: encounterDifficulty
+        })
+      )
+    );
+    folderId = await ensureEncounterFolder();
+  }
+  setLastFolderId(folderId);
+
+  const encounterPlan =
+    encounterMode === "encounter"
+      ? buildEncounterPlan(countInput, {
+          partyLevel: partyLevelInput,
+          partySize: partySizeInput,
+          difficulty: encounterDifficulty
+        })
+      : null;
 
   const planned = [];
+  const usedNames = new Set();
+  let archetypePool = shuffleArray(DATA_CACHE.archetypes);
   for (let i = 0; i < countInput; i++) {
-    const archetype =
-      archetypeInput === "random"
-        ? pickRandom(DATA_CACHE.archetypes)
+    const encounterPool =
+      encounterMode === "encounter" && encounterArchetypeKey !== "random"
+        ? DATA_CACHE.archetypes.filter((a) => a.id === encounterArchetypeKey)
+        : null;
+    const useRandomArchetype = encounterMode === "encounter"
+      ? encounterArchetypeKey === "random"
+      : archetypeInput === "random";
+    if (encounterMode === "encounter" && encounterPool && encounterPool.length) {
+      if (!archetypePool.length || archetypePool.some((a) => !encounterPool.includes(a))) {
+        archetypePool = shuffleArray(encounterPool);
+      }
+    }
+    if (useRandomArchetype && !archetypePool.length) {
+      archetypePool = shuffleArray(encounterPool && encounterPool.length ? encounterPool : DATA_CACHE.archetypes);
+    }
+    const archetype = useRandomArchetype
+      ? archetypePool.shift()
+      : encounterMode === "encounter"
+        ? (encounterPool?.[0] || DATA_CACHE.archetypes.find((a) => a.id === encounterArchetypeKey))
         : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
     const resolvedArchetype = archetype || DATA_CACHE.archetypes[0];
 
@@ -638,11 +838,15 @@ async function createNpcFromForm(formData) {
         : cultureInput;
 
     const speciesEntry =
-      fixedSpecies || (speciesList.length ? pickRandom(speciesList) : null);
+      (encounterMode === "encounter" ? fixedEncounterSpecies : fixedSpecies) ||
+      (speciesList.length ? pickRandom(speciesList) : null);
     const speciesName = speciesEntry?.name || "Unknown";
 
+    const plannedTier = encounterPlan?.[i]?.tier ?? tier;
+    const importantNpc = encounterPlan?.[i]?.importantNpc ?? manualImportant;
+
     const generated = generateNpc({
-      tier,
+      tier: plannedTier,
       archetype: resolvedArchetype,
       culture,
       race: speciesName,
@@ -650,7 +854,8 @@ async function createNpcFromForm(formData) {
       includeLoot,
       includeSecret,
       includeHook,
-      importantNpc
+      importantNpc,
+      usedNames
     });
 
     planned.push({ generated, speciesEntry });
@@ -691,15 +896,22 @@ async function createNpcFromForm(formData) {
 }
 
 function generateNpc(options) {
-  const { tier, archetype, culture, race, budget, includeLoot, includeSecret, includeHook, importantNpc } = options;
+  const {
+    tier,
+    archetype,
+    culture,
+    race,
+    budget,
+    includeLoot,
+    includeSecret,
+    includeHook,
+    importantNpc,
+    usedNames
+  } = options;
   const names = DATA_CACHE.names;
   const traits = DATA_CACHE.traits;
 
-  const firstName = pickRandomOr(names?.cultures?.[culture], "Nameless");
-  const surname = chance(0.6) ? pickRandomOr(names?.surnames, "") : "";
-  const title = importantNpc && chance(0.4) ? pickRandomOr(names?.titles, "") : "";
-
-  const name = [title, firstName, surname].filter(Boolean).join(" ");
+  const name = buildUniqueName(names, culture, importantNpc, usedNames);
 
   const appearance = pickRandomN(traits?.appearance || [], 2 + randInt(0, 2));
   const speech = pickRandomOr(traits?.speech, "Plainspoken");
@@ -2049,6 +2261,23 @@ function buildBasicAbilityActivities(name, activationType = "action") {
   };
 }
 
+function buildUniqueName(names, culture, importantNpc, usedNames) {
+  const tries = 12;
+  for (let i = 0; i < tries; i++) {
+    const firstName = pickRandomOr(names?.cultures?.[culture], "Nameless");
+    const surname = chance(0.6) ? pickRandomOr(names?.surnames, "") : "";
+    const title = importantNpc && chance(0.4) ? pickRandomOr(names?.titles, "") : "";
+    const full = [title, firstName, surname].filter(Boolean).join(" ");
+    if (!usedNames || !usedNames.has(full)) {
+      if (usedNames) usedNames.add(full);
+      return full;
+    }
+  }
+  const fallback = `Nameless ${randInt(1, 999)}`;
+  if (usedNames) usedNames.add(fallback);
+  return fallback;
+}
+
 function isAllowedItemEntry(entry, allowMagic = false) {
   const rarity = String(entry.system?.rarity || "").toLowerCase();
   const properties = entry.system?.properties || [];
@@ -2238,6 +2467,81 @@ function getAutoTier() {
   if (avg <= 6) return 2;
   if (avg <= 10) return 3;
   return 4;
+}
+
+function getTierForLevel(level) {
+  const lvl = Number(level) || 1;
+  if (lvl <= 3) return 1;
+  if (lvl <= 6) return 2;
+  if (lvl <= 10) return 3;
+  return 4;
+}
+
+function buildEncounterCount(options) {
+  const partyLevel = Math.max(1, Math.min(20, Number(options?.partyLevel) || 1));
+  const partySize = Math.max(1, Math.min(8, Number(options?.partySize) || 4));
+  const difficulty = String(options?.difficulty || "medium").toLowerCase();
+
+  let base = partySize;
+  if (difficulty === "easy") base = Math.max(1, partySize - 1);
+  if (difficulty === "hard") base = partySize + 1;
+  if (difficulty === "deadly") base = partySize + 2;
+
+  if (partyLevel >= 11) base += 1;
+  if (partyLevel >= 17) base += 1;
+
+  return Math.max(1, Math.min(12, base));
+}
+
+function buildEncounterPlan(count, options) {
+  const total = Math.max(1, Number(count) || 1);
+  const partyLevel = Math.max(1, Math.min(20, Number(options?.partyLevel) || 1));
+  const partySize = Math.max(1, Math.min(8, Number(options?.partySize) || 4));
+  const difficulty = String(options?.difficulty || "medium").toLowerCase();
+
+  let tier = getTierForLevel(partyLevel);
+  if (difficulty === "easy") tier -= 1;
+  if (difficulty === "deadly") tier += 1;
+
+  if (total >= 6) tier -= 1;
+  if (total >= 10) tier -= 1;
+
+  tier = Math.max(1, Math.min(4, tier));
+
+  const plan = [];
+  const bossCount = difficulty === "deadly" ? 1 : difficulty === "hard" ? 1 : 0;
+  const bossIndex = total > 1 ? Math.floor(Math.random() * total) : 0;
+
+  for (let i = 0; i < total; i++) {
+    let entryTier = tier;
+    if (total >= 4 && Math.random() < 0.35) entryTier = Math.max(1, tier - 1);
+    if (total >= 6 && Math.random() < 0.2) entryTier = Math.max(1, tier - 2);
+    entryTier = Math.max(1, Math.min(4, entryTier));
+
+    const isBoss = bossCount > 0 && i === bossIndex && partySize >= 3;
+    plan.push({ tier: entryTier, importantNpc: isBoss });
+  }
+
+  return plan;
+}
+
+async function ensureEncounterFolder() {
+  if (!game.user?.isGM || typeof Folder?.create !== "function") return null;
+  const folders = (game.folders || []).filter((folder) => folder.type === "Actor");
+  const used = new Set();
+  for (const folder of folders) {
+    const match = String(folder.name || "").match(/^Encounter-(\d+)$/);
+    if (match) used.add(Number(match[1]));
+  }
+  let next = 1;
+  while (used.has(next)) next += 1;
+  const name = `Encounter-${next}`;
+  try {
+    const created = await Folder.create({ name, type: "Actor" });
+    return created?.id || null;
+  } catch {
+    return null;
+  }
 }
 
 function getActorLevel(actor) {
@@ -2541,6 +2845,15 @@ async function buildCompendiumCache() {
 function pickRandom(arr) {
   if (!arr || !arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function shuffleArray(arr) {
+  const out = Array.isArray(arr) ? [...arr] : [];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 function pickRandomN(arr, n) {

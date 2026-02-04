@@ -16,6 +16,7 @@ One-click NPC generator for Foundry VTT. Creates a ready-to-play 5e NPC with sta
 - Budget tiers for gear quality (Poor/Normal/Well-Off/Elite)
 - Random token silhouettes with archetype mapping
 - Bulk NPC generation with count controls
+- Encounter mode (auto-balanced count/tier, Encounter-N folders)
 - Optional folder placement (remembers last used)
 - Optional loot, secrets, quest hooks
 - Compendium cache builder (faster, uses all Item compendiums)
