@@ -1992,7 +1992,7 @@ async function getSpellCandidates(maxLevel, keywords) {
   const matches = [];
   const fallback = [];
 
-  for (const packName of getPacks("spells")) {
+  for (const packName of await getSpellPackNames()) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
     const index = await getPackIndex(pack, ["type", "name", "system.level"]);
@@ -2011,6 +2011,25 @@ async function getSpellCandidates(maxLevel, keywords) {
   }
 
   return matches.length ? matches : fallback;
+}
+
+async function getSpellPackNames() {
+  const preferred = new Set(getPacks("spells") || []);
+  const allItemPacks = collectAllItemPackNames();
+  for (const packName of allItemPacks) {
+    if (preferred.has(packName)) continue;
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+    try {
+      const index = await getPackIndex(pack, ["type"]);
+      if (index.some((entry) => entry.type === "spell")) {
+        preferred.add(packName);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return Array.from(preferred);
 }
 
 async function buildFeatureItems(npc) {
@@ -2171,8 +2190,8 @@ function getWeaponKeywords(style, tags) {
 }
 
 function getSpellCountByTier(tier, importantNpc) {
-  const base = tier <= 1 ? 2 : tier === 2 ? 3 : tier === 3 ? 4 : 5;
-  return importantNpc ? base + 1 : base;
+  const base = tier <= 1 ? 3 : tier === 2 ? 4 : tier === 3 ? 5 : 6;
+  return importantNpc ? base + 2 : base;
 }
 
 function getMaxSpellLevelByTier(tier) {

@@ -1,7 +1,8 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Expand spell packs to include custom compendiums
+- Increase spell counts for caster NPCs by tier
 
 ## 0.1.18
 - Encounter tab with auto-balanced count/tier and Encounter-N folders
