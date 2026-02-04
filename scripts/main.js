@@ -1,5 +1,6 @@
 const MODULE_ID = "npc-button-5e";
 const DATA_CACHE = { loaded: false };
+let LOAD_PROMISE = null;
 const COMPENDIUM_CACHE_FILE = "compendium-cache";
 const USE_COMPENDIUM_CACHE = true;
 const CACHE_DOC_TYPES = new Set(["weapon", "equipment", "loot", "consumable", "feat", "spell"]);
@@ -439,6 +440,11 @@ async function openNpcDialog() {
 async function createNpcFromForm(formData) {
   await loadData();
 
+  if (!DATA_CACHE.archetypes?.length) {
+    ui.notifications?.error("NPC Button: No archetypes found. Check data/archetypes.json.");
+    return;
+  }
+
   const tierInput = formData.get("tier");
   const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
   const cultureInput = formData.get("culture");
@@ -471,6 +477,7 @@ async function createNpcFromForm(formData) {
       archetypeInput === "random"
         ? pickRandom(DATA_CACHE.archetypes)
         : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
+    const resolvedArchetype = archetype || DATA_CACHE.archetypes[0];
 
     const culture =
       cultureInput === "random"
@@ -483,7 +490,7 @@ async function createNpcFromForm(formData) {
 
     const generated = generateNpc({
       tier,
-      archetype,
+      archetype: resolvedArchetype,
       culture,
       race: speciesName,
       budget: budgetInput,
@@ -525,18 +532,18 @@ function generateNpc(options) {
   const names = DATA_CACHE.names;
   const traits = DATA_CACHE.traits;
 
-  const firstName = pickRandom(names.cultures[culture]);
-  const surname = chance(0.6) ? pickRandom(names.surnames) : "";
-  const title = importantNpc && chance(0.4) ? pickRandom(names.titles) : "";
+  const firstName = pickRandomOr(names?.cultures?.[culture], "Nameless");
+  const surname = chance(0.6) ? pickRandomOr(names?.surnames, "") : "";
+  const title = importantNpc && chance(0.4) ? pickRandomOr(names?.titles, "") : "";
 
   const name = [title, firstName, surname].filter(Boolean).join(" ");
 
-  const appearance = pickRandomN(traits.appearance, 2 + randInt(0, 2));
-  const speech = pickRandom(traits.speech);
-  const motivation = pickRandom(traits.motivations);
-  const secret = includeSecret ? pickRandom(traits.secrets) : null;
-  const hook = includeHook ? pickRandom(traits.hooks) : null;
-  const quirk = pickRandom(traits.quirks);
+  const appearance = pickRandomN(traits?.appearance || [], 2 + randInt(0, 2));
+  const speech = pickRandomOr(traits?.speech, "Plainspoken");
+  const motivation = pickRandomOr(traits?.motivations, "Survival");
+  const secret = includeSecret ? pickRandomOr(traits?.secrets, null) : null;
+  const hook = includeHook ? pickRandomOr(traits?.hooks, null) : null;
+  const quirk = pickRandomOr(traits?.quirks, "Unremarkable");
 
   const abilities = applyTierToAbilities(varyBaseAbilities(archetype.baseAbilities), tier, importantNpc);
   const prime = getPrimeAbilities(abilities);
@@ -1089,13 +1096,16 @@ function buildLoot(archetype, tier) {
 
   const items = [];
   if (Array.isArray(lootData.commonItems) && lootData.commonItems.length) {
-    items.push(pickRandom(lootData.commonItems));
+    const item = pickRandom(lootData.commonItems);
+    if (item) items.push(item);
   }
   if (lootData.tables?.[archetype.lootTable]?.length && chance(0.6)) {
-    items.push(pickRandom(lootData.tables[archetype.lootTable]));
+    const item = pickRandom(lootData.tables[archetype.lootTable]);
+    if (item) items.push(item);
   }
   if (tier >= 2 && Array.isArray(lootData.specialItems) && lootData.specialItems.length && chance(0.4)) {
-    items.push(pickRandom(lootData.specialItems));
+    const item = pickRandom(lootData.specialItems);
+    if (item) items.push(item);
   }
 
   return { coins, items };
@@ -2074,22 +2084,33 @@ function getActorLevel(actor) {
 
 async function loadData() {
   if (DATA_CACHE.loaded) return;
+  if (LOAD_PROMISE) return LOAD_PROMISE;
 
-  const [names, traits, archetypes, abilities, loot] = await Promise.all([
-    fetchJson("names"),
-    fetchJson("traits"),
-    fetchJson("archetypes"),
-    fetchJson("loot")
-  ]);
+  LOAD_PROMISE = (async () => {
+    const [names, traits, archetypes, abilities, loot] = await Promise.all([
+      fetchJson("names"),
+      fetchJson("traits"),
+      fetchJson("archetypes"),
+      fetchJson("loot")
+    ]);
 
-  DATA_CACHE.names = names;
-  DATA_CACHE.traits = traits;
-  DATA_CACHE.archetypes = archetypes;
-  DATA_CACHE.loot = loot;
-  DATA_CACHE.speciesEntries = await getSpeciesEntries();
-  DATA_CACHE.compendiumCache = await fetchOptionalJson(COMPENDIUM_CACHE_FILE);
-  DATA_CACHE.compendiumLists = DATA_CACHE.compendiumCache?.packsByType || null;
-  DATA_CACHE.loaded = true;
+    DATA_CACHE.names = names;
+    DATA_CACHE.traits = traits;
+    DATA_CACHE.archetypes = archetypes;
+    DATA_CACHE.loot = loot;
+    DATA_CACHE.speciesEntries = await getSpeciesEntries();
+    DATA_CACHE.compendiumCache = await fetchOptionalJson(COMPENDIUM_CACHE_FILE);
+    DATA_CACHE.compendiumLists = DATA_CACHE.compendiumCache?.packsByType || null;
+    DATA_CACHE.loaded = true;
+    validateDataCache();
+  })();
+
+  LOAD_PROMISE = LOAD_PROMISE.catch((err) => {
+    LOAD_PROMISE = null;
+    throw err;
+  });
+
+  return LOAD_PROMISE;
 }
 
 async function fetchJson(name) {
@@ -2355,10 +2376,12 @@ async function buildCompendiumCache() {
 }
 
 function pickRandom(arr) {
+  if (!arr || !arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
 function pickRandomN(arr, n) {
+  if (!arr || !arr.length) return [];
   if (arr.length <= n) return [...arr];
   const pool = [...arr];
   const out = [];
@@ -2367,6 +2390,11 @@ function pickRandomN(arr, n) {
     out.push(pool.splice(idx, 1)[0]);
   }
   return out;
+}
+
+function pickRandomOr(arr, fallback) {
+  const value = pickRandom(arr);
+  return value === null ? fallback : value;
 }
 
 function randInt(min, max) {
@@ -2379,4 +2407,26 @@ function chance(probability) {
 
 function capitalize(value) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function validateDataCache() {
+  const problems = [];
+  if (!DATA_CACHE.names?.cultures || !Object.keys(DATA_CACHE.names.cultures).length) {
+    problems.push("names.cultures");
+  }
+  if (!Array.isArray(DATA_CACHE.names?.surnames) || !DATA_CACHE.names.surnames.length) {
+    problems.push("names.surnames");
+  }
+  if (!Array.isArray(DATA_CACHE.traits?.appearance) || !DATA_CACHE.traits.appearance.length) {
+    problems.push("traits.appearance");
+  }
+  if (!Array.isArray(DATA_CACHE.archetypes) || !DATA_CACHE.archetypes.length) {
+    problems.push("archetypes");
+  }
+
+  if (problems.length) {
+    ui.notifications?.warn(
+      `NPC Button: Missing or empty data (${problems.join(", ")}). Using fallbacks where possible.`
+    );
+  }
 }
