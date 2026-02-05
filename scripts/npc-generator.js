@@ -734,12 +734,30 @@ export async function buildRoleAbilityItems(npc) {
 export async function buildSpellItems(npc) {
   const tags = npc.archetype.tags || [];
   const maxLevel = getMaxSpellLevelByTier(npc.tier);
-  const count = getSpellCountByTier(npc.tier, npc.importantNpc);
+  const spellCount = getSpellCountByTier(npc.tier, npc.importantNpc);
+  const cantripCount = getCantripCountByTier(npc.tier);
   const keywords = getSpellKeywords(tags);
 
-  const candidates = await getSpellCandidates(maxLevel, keywords);
-  const chosen = pickRandomN(candidates, count);
   const out = [];
+
+  // Get cantrips (level 0)
+  const cantripCandidates = await getCantripCandidates(keywords);
+  const chosenCantrips = pickRandomN(cantripCandidates, cantripCount);
+  for (const entry of chosenCantrips) {
+    const cached = getCachedDoc(entry.pack, entry._id);
+    if (cached) {
+      out.push(cloneItemData(cached));
+      continue;
+    }
+    const pack = game.packs?.get(entry.pack);
+    if (!pack) continue;
+    const doc = await pack.getDocument(entry._id);
+    if (doc) out.push(doc.toObject());
+  }
+
+  // Get leveled spells (1+)
+  const candidates = await getSpellCandidates(maxLevel, keywords);
+  const chosen = pickRandomN(candidates, spellCount);
   for (const entry of chosen) {
     const cached = getCachedDoc(entry.pack, entry._id);
     if (cached) {
@@ -751,12 +769,13 @@ export async function buildSpellItems(npc) {
     const doc = await pack.getDocument(entry._id);
     if (doc) out.push(doc.toObject());
   }
+
   if (out.length) return out;
-  return buildCachedSpellItemsFallback(maxLevel, keywords, count);
+  return buildCachedSpellItemsFallback(maxLevel, keywords, spellCount);
 }
 
 /**
- * Get spell count by tier
+ * Get spell count by tier (leveled spells only, 1+)
  * @param {number} tier - Tier level
  * @param {boolean} importantNpc - Whether NPC is boss
  * @returns {number}
@@ -764,6 +783,18 @@ export async function buildSpellItems(npc) {
 export function getSpellCountByTier(tier, importantNpc) {
   const base = tier <= 1 ? 3 : tier === 2 ? 4 : tier === 3 ? 5 : 6;
   return importantNpc ? base + 2 : base;
+}
+
+/**
+ * Get cantrip count by tier
+ * @param {number} tier - Tier level
+ * @returns {number}
+ */
+export function getCantripCountByTier(tier) {
+  if (tier <= 1) return 2;
+  if (tier === 2) return 3;
+  if (tier === 3) return 3;
+  return 4;
 }
 
 /**
@@ -785,16 +816,49 @@ export function getMaxSpellLevelByTier(tier) {
  */
 export function getSpellKeywords(tags) {
   const keywords = [];
-  if (tags.includes("holy")) keywords.push("cure", "healing", "bless", "sanctuary", "guiding", "restoration", "ward");
-  if (tags.includes("dark")) keywords.push("necrotic", "hex", "curse", "blight", "shadow", "fear");
-  if (tags.includes("knowledge")) keywords.push("detect", "identify", "divination", "locate", "comprehend", "illusion");
-  if (tags.includes("wilderness")) keywords.push("entangle", "thorn", "beast", "hunter", "wind", "ice");
-  if (tags.includes("social")) keywords.push("charm", "friends", "command", "suggestion", "calm", "heroism");
+  if (tags.includes("holy")) keywords.push("cure", "healing", "bless", "sanctuary", "guiding", "restoration", "ward", "sacred", "flame", "light", "spare");
+  if (tags.includes("dark")) keywords.push("necrotic", "hex", "curse", "blight", "shadow", "fear", "chill", "touch", "toll", "dead", "infestation");
+  if (tags.includes("knowledge")) keywords.push("detect", "identify", "divination", "locate", "comprehend", "illusion", "minor", "prestidigitation", "mage", "hand", "message");
+  if (tags.includes("wilderness")) keywords.push("entangle", "thorn", "beast", "hunter", "wind", "ice", "druidcraft", "produce", "flame", "shillelagh", "thorn", "whip");
+  if (tags.includes("social")) keywords.push("charm", "friends", "command", "suggestion", "calm", "heroism", "vicious", "mockery", "minor", "illusion");
+  // Generic caster keywords for cantrips
+  if (!keywords.length) keywords.push("fire", "bolt", "ray", "frost", "shock", "acid", "splash", "blade");
   return keywords;
 }
 
 /**
- * Get spell candidates from packs
+ * Get cantrip candidates from packs (level 0 spells)
+ * @param {string[]} keywords - Keywords to match
+ * @returns {Promise<Array>}
+ */
+export async function getCantripCandidates(keywords) {
+  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  const matches = [];
+  const fallback = [];
+
+  for (const packName of await getSpellPackNames()) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+    const index = await getPackIndex(pack, ["type", "name", "system.level"]);
+    for (const entry of index) {
+      if (entry.type !== "spell") continue;
+      const level = Number(entry.system?.level ?? 0);
+      if (level !== 0) continue; // Only cantrips
+      const haystack = getSearchStrings(entry);
+      const record = { ...entry, pack: pack.collection };
+      if (normalized.length && normalized.some((k) => haystack.some((h) => h.includes(k)))) {
+        matches.push(record);
+      } else {
+        fallback.push(record);
+      }
+    }
+  }
+
+  return matches.length ? matches : fallback;
+}
+
+/**
+ * Get spell candidates from packs (leveled spells 1+)
  * @param {number} maxLevel - Max spell level
  * @param {string[]} keywords - Keywords to match
  * @returns {Promise<Array>}
@@ -811,7 +875,7 @@ export async function getSpellCandidates(maxLevel, keywords) {
     for (const entry of index) {
       if (entry.type !== "spell") continue;
       const level = Number(entry.system?.level ?? 0);
-      if (!Number.isFinite(level) || level > maxLevel) continue;
+      if (!Number.isFinite(level) || level < 1 || level > maxLevel) continue; // Skip cantrips (level 0)
       const haystack = getSearchStrings(entry);
       const record = { ...entry, pack: pack.collection };
       if (normalized.length && normalized.some((k) => haystack.some((h) => h.includes(k)))) {
