@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Add cantrips for caster NPCs (2-4 by tier)
+
 ## 0.5.0
 - **Major refactoring**: Split monolithic main.js (3000+ lines) into 9 focused modules
   - `constants.js` — configuration and constants
