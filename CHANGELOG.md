@@ -1,7 +1,23 @@
 # Changelog
 
-## Unreleased
-- TODO: describe changes
+## 0.5.0
+- **Major refactoring**: Split monolithic main.js (3000+ lines) into 9 focused modules
+  - `constants.js` — configuration and constants
+  - `utils.js` — utility functions
+  - `data-loader.js` — data loading and caching
+  - `cache.js` — compendium cache management
+  - `items.js` — item handling and budget system
+  - `species.js` — race/species handling
+  - `encounter.js` — encounter generation
+  - `npc-generator.js` — NPC generation logic
+  - `ui.js` — UI components and dialogs
+- **Bug fixes**:
+  - Fixed null-check crash when picking items by budget
+  - Added proper JSON parse error handling with descriptive messages
+  - Fixed race condition in species loading with promise-based locking
+  - Fixed fragile array index synchronization when applying species traits
+- **Performance**: Parallel document loading in budget sampling (Promise.allSettled)
+- **Code quality**: Removed duplicate functions, improved error messages
 
 ## 0.1.19
 - Expand spell packs to include custom compendiums
