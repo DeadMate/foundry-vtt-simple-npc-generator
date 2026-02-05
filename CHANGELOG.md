@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.5.1
 - Add cantrips for caster NPCs (2-4 by tier)
 
 ## 0.5.0
