@@ -20,7 +20,12 @@ jobs:
       - name: Detect module changes
         id: changes
         run: |
-          CHANGED=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
+          # Handle force push: if before commit doesn't exist, compare with parent
+          BEFORE="${{ github.event.before }}"
+          if ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            BEFORE="HEAD~1"
+          fi
+          CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" 2>/dev/null || echo "scripts/")
           echo "$CHANGED"
           if echo "$CHANGED" | grep -E "^(module\\.json|scripts/|data/|assets/)" >/dev/null; then
             echo "changed=true" >> $GITHUB_OUTPUT
