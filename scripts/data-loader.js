@@ -21,25 +21,30 @@ export async function loadData() {
   if (LOAD_PROMISE) return LOAD_PROMISE;
 
   LOAD_PROMISE = (async () => {
-    const [names, traits, archetypes, loot] = await Promise.all([
-      fetchJson("names"),
-      fetchJson("traits"),
-      fetchJson("archetypes"),
-      fetchJson("loot")
-    ]);
+    try {
+      const [names, traits, archetypes, loot] = await Promise.all([
+        fetchJson("names"),
+        fetchJson("traits"),
+        fetchJson("archetypes"),
+        fetchJson("loot")
+      ]);
 
-    DATA_CACHE.names = names;
-    DATA_CACHE.traits = traits;
-    DATA_CACHE.archetypes = archetypes;
-    DATA_CACHE.loot = loot;
+      DATA_CACHE.names = names;
+      DATA_CACHE.traits = traits;
+      DATA_CACHE.archetypes = archetypes;
+      DATA_CACHE.loot = loot;
 
-    // Import getSpeciesEntries lazily to avoid circular dependency
-    const { getSpeciesEntries } = await import("./species.js");
-    DATA_CACHE.speciesEntries = await getSpeciesEntries();
-    DATA_CACHE.compendiumCache = await fetchOptionalJson(COMPENDIUM_CACHE_FILE);
-    DATA_CACHE.compendiumLists = DATA_CACHE.compendiumCache?.packsByType || null;
-    DATA_CACHE.loaded = true;
-    validateDataCache();
+      // Import getSpeciesEntries lazily to avoid circular dependency
+      const { getSpeciesEntries } = await import("./species.js");
+      DATA_CACHE.speciesEntries = await getSpeciesEntries();
+      DATA_CACHE.compendiumCache = await fetchOptionalJson(COMPENDIUM_CACHE_FILE);
+      DATA_CACHE.compendiumLists = DATA_CACHE.compendiumCache?.packsByType || null;
+      DATA_CACHE.loaded = true;
+      validateDataCache();
+    } catch (err) {
+      console.error(`${MODULE_ID} | Failed to load module data`, err);
+      throw err;
+    }
   })();
 
   LOAD_PROMISE = LOAD_PROMISE.catch((err) => {

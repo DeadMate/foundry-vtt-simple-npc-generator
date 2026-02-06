@@ -3,7 +3,7 @@
  * @module items
  */
 
-import { COMPENDIUMS, BUDGET_RANGES, MODULE_ID, TOKEN_ASSETS, TOKEN_ROLE_MAP } from "./constants.js";
+import { COMPENDIUMS, MODULE_ID, TOKEN_ASSETS, TOKEN_ROLE_MAP } from "./constants.js";
 import { DATA_CACHE } from "./data-loader.js";
 import {
   pickRandom,
@@ -18,7 +18,8 @@ import {
   getSearchStrings,
   generateId,
   getItemPriceValue,
-  pickByBudget
+  pickByBudget,
+  getBudgetPriceRange
 } from "./utils.js";
 import {
   getCachedDoc,
@@ -58,10 +59,7 @@ export function getItemIndexFields() {
  * @returns {{min: number, max: number}}
  */
 export function getBudgetRange(budget, allowMagic = false) {
-  if (budget === "elite" && allowMagic) {
-    return BUDGET_RANGES.eliteMagic;
-  }
-  return BUDGET_RANGES[budget] || BUDGET_RANGES.normal;
+  return getBudgetPriceRange(budget, allowMagic);
 }
 
 /**

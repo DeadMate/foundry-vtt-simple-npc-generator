@@ -3,6 +3,8 @@
  * @module utils
  */
 
+import { BUDGET_RANGES } from "./constants.js";
+
 /**
  * Pick a random element from an array
  * @param {Array} arr - Array to pick from
@@ -83,6 +85,20 @@ export function chance(probability) {
 export function capitalize(value) {
   if (!value) return "";
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/**
+ * Escape HTML special characters in dynamic text
+ * @param {*} value - Value to escape
+ * @returns {string}
+ */
+export function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /**
@@ -203,7 +219,21 @@ export function getItemPriceValue(entryOrDoc) {
 }
 
 /**
- * Pick item by budget using percentile ranges
+ * Resolve budget range in copper pieces
+ * @param {string} budget - Budget tier
+ * @param {boolean} allowMagic - Whether magic items are allowed
+ * @returns {{min: number, max: number}}
+ */
+export function getBudgetPriceRange(budget, allowMagic = false) {
+  const key = String(budget || "normal").toLowerCase();
+  if (key === "elite" && allowMagic) {
+    return BUDGET_RANGES.eliteMagic;
+  }
+  return BUDGET_RANGES[key] || BUDGET_RANGES.normal;
+}
+
+/**
+ * Pick item by budget: first by explicit price range, then by percentile for variety
  * @param {Array} candidates - Array of candidates
  * @param {string} budget - Budget tier
  * @param {boolean} allowMagic - Whether magic items are allowed
@@ -212,12 +242,29 @@ export function getItemPriceValue(entryOrDoc) {
  */
 export function pickByBudget(candidates, budget, allowMagic, priceFn) {
   if (!Array.isArray(candidates) || !candidates.length) return null;
+  const getPrice = typeof priceFn === "function" ? priceFn : () => null;
   const priced = candidates
-    .map((c) => ({ c, price: priceFn(c) }))
+    .map((c) => ({ c, price: getPrice(c) }))
     .filter((p) => Number.isFinite(p.price));
   if (!priced.length) return pickRandom(candidates);
 
-  const sorted = priced.sort((a, b) => a.price - b.price);
+  const range = getBudgetPriceRange(budget, allowMagic);
+  const inRange = priced.filter((p) => p.price >= range.min && p.price <= range.max);
+  let budgetPool = inRange;
+  if (!budgetPool.length) {
+    // If nothing fits exactly, pick from nearest prices to budget bounds.
+    const withDistance = priced.map((p) => {
+      if (p.price < range.min) return { ...p, distance: range.min - p.price };
+      if (p.price > range.max) return { ...p, distance: p.price - range.max };
+      return { ...p, distance: 0 };
+    });
+    const minDistance = Math.min(...withDistance.map((p) => p.distance));
+    budgetPool = withDistance
+      .filter((p) => p.distance === minDistance)
+      .map(({ c, price }) => ({ c, price }));
+  }
+
+  const sorted = budgetPool.sort((a, b) => a.price - b.price);
   const n = sorted.length;
   const pickRange = (fromPct, toPct) => {
     const start = Math.max(0, Math.floor(n * fromPct));

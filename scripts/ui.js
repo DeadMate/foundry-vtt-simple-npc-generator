@@ -6,7 +6,7 @@
 import { MODULE_ID } from "./constants.js";
 import { DATA_CACHE, loadData } from "./data-loader.js";
 import { buildCompendiumCache } from "./cache.js";
-import { capitalize, pickRandom, shuffleArray } from "./utils.js";
+import { capitalize, pickRandom, shuffleArray, escapeHtml } from "./utils.js";
 import {
   getSpeciesEntries,
   getSpeciesOptions,
@@ -34,7 +34,9 @@ export function getActorFolderOptions() {
     const bName = String(b.name || "").toLowerCase();
     return aName.localeCompare(bName);
   });
-  return sorted.map((folder) => `<option value="${folder.id}">${folder.name}</option>`).join("");
+  return sorted
+    .map((folder) => `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.name)}</option>`)
+    .join("");
 }
 
 /**
@@ -176,9 +178,9 @@ export async function showChangelogIfUpdated() {
 
   const content = `
     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-      <div style="font-weight: 600;">What's new in v${version}</div>
+      <div style="font-weight: 600;">What's new in v${escapeHtml(version)}</div>
       <ul style="margin: 0; padding-left: 1.25rem;">
-        ${notes.map((line) => `<li>${line}</li>`).join("")}
+        ${notes.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
       </ul>
     </div>
   `;
@@ -200,7 +202,6 @@ export async function showChangelogIfUpdated() {
 
 /**
  * Load changelog notes for a version
- * FIX: Corrected regex for bullet extraction
  * @param {string} version - Version string
  * @returns {Promise<string[]|null>}
  */
@@ -210,16 +211,19 @@ export async function loadChangelogNotes(version) {
     if (!response.ok) return null;
     const text = await response.text();
     const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const sectionMatch = text.match(
-      new RegExp(`^##\\s+${escaped}\\s*$([\\s\\S]*?)(?=^##\\s+|\\Z)`, "m")
-    );
-    if (!sectionMatch) return null;
-    const sectionText = sectionMatch[1] || "";
+    const headingRe = new RegExp(`^##\\s+${escaped}\\s*$`, "m");
+    const headingMatch = headingRe.exec(text);
+    if (!headingMatch) return null;
+
+    const start = headingMatch.index + headingMatch[0].length;
+    const rest = text.slice(start).replace(/^\r?\n/, "");
+    const nextHeadingIndex = rest.search(/^##\s+/m);
+    const sectionText = nextHeadingIndex === -1 ? rest : rest.slice(0, nextHeadingIndex);
+
     const bullets = sectionText
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line.startsWith("- "))
-      // FIX: Corrected regex - was using \\s+ instead of \s+
       .map((line) => line.replace(/^-\s+/, "").trim())
       .filter(Boolean);
     return bullets.length ? bullets : null;
@@ -286,20 +290,21 @@ export async function openNpcDialog() {
     return;
   }
 
-  await loadData();
+  try {
+    await loadData();
 
-  const archetypes = DATA_CACHE.archetypes;
-  if (!DATA_CACHE.speciesEntries?.length) {
-    ui.notifications?.warn("NPC Button: No species compendium entries found.");
-  }
-  const options = archetypes
-    .map((a) => `<option value="${a.id}">${a.name}</option>`)
-    .join("");
-  const folderOptions = getActorFolderOptions();
-  const lastFolder = getLastFolderId();
-  const speciesOptions = await getSpeciesOptions();
-  const lastSpeciesKey = getLastSpeciesKey();
-  const lastOptions = getLastNpcOptions();
+    const archetypes = DATA_CACHE.archetypes;
+    if (!DATA_CACHE.speciesEntries?.length) {
+      ui.notifications?.warn("NPC Button: No species compendium entries found.");
+    }
+    const options = archetypes
+      .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`)
+      .join("");
+    const folderOptions = getActorFolderOptions();
+    const lastFolder = getLastFolderId();
+    const speciesOptions = await getSpeciesOptions();
+    const lastSpeciesKey = getLastSpeciesKey();
+    const lastOptions = getLastNpcOptions();
 
   const content = `
     <style>
@@ -357,8 +362,8 @@ export async function openNpcDialog() {
         <div class="form-fields">
           <select name="culture">
             <option value="random">Random</option>
-            ${Object.keys(DATA_CACHE.names.cultures)
-              .map((k) => `<option value="${k}">${capitalize(k)}</option>`)
+            ${Object.keys(DATA_CACHE.names?.cultures || {})
+              .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(capitalize(k))}</option>`)
               .join("")}
           </select>
         </div>
@@ -452,7 +457,7 @@ export async function openNpcDialog() {
     </form>
   `;
 
-  new Dialog({
+    new Dialog({
     title: "NPC Button (D&D 5e)",
     content,
     buttons: {
@@ -583,7 +588,11 @@ export async function openNpcDialog() {
       refreshEncounterCount();
       updateCreateLabel();
     }
-  }).render(true);
+    }).render(true);
+  } catch (err) {
+    console.error("NPC Button: Failed to open NPC dialog.", err);
+    ui.notifications?.error("NPC Button: Failed to open generator dialog. Check console.");
+  }
 }
 
 /**
@@ -591,179 +600,194 @@ export async function openNpcDialog() {
  * @param {FormData} formData - Form data
  */
 export async function createNpcFromForm(formData) {
-  await loadData();
+  try {
+    await loadData();
 
-  if (!DATA_CACHE.archetypes?.length) {
-    ui.notifications?.error("NPC Button: No archetypes found. Check data/archetypes.json.");
-    return;
-  }
+    if (!DATA_CACHE.archetypes?.length) {
+      ui.notifications?.error("NPC Button: No archetypes found. Check data/archetypes.json.");
+      return;
+    }
 
-  const tierInput = formData.get("tier");
-  const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
-  const cultureInput = formData.get("culture");
-  const archetypeInput = formData.get("archetype");
-  const folderInput = String(formData.get("folder") || "").trim() || null;
-  let folderId = folderInput;
-  const encounterMode = String(formData.get("encounterMode") || "main");
-  const encounterSpeciesKey = String(formData.get("encounterSpecies") || "random");
-  const encounterArchetypeKey = String(formData.get("encounterArchetype") || "random");
-  const partyLevelInput = Number(formData.get("partyLevel") || 3);
-  const partySizeInput = Number(formData.get("partySize") || 4);
-  const encounterDifficulty = String(formData.get("encounterDifficulty") || "medium");
-  setLastNpcOptions({
-    tier: String(tierInput || "auto"),
-    budget: String(formData.get("budget") || "normal"),
-    culture: String(cultureInput || "random"),
-    archetype: String(archetypeInput || "random"),
-    encounterSpecies: encounterSpeciesKey,
-    encounterArchetype: encounterArchetypeKey,
-    partyLevel: partyLevelInput,
-    partySize: partySizeInput,
-    encounterDifficulty,
-    encounterMode,
-    includeLoot: formData.get("includeLoot") === "on",
-    includeSecret: formData.get("includeSecret") === "on",
-    includeHook: formData.get("includeHook") === "on",
-    importantNpc: formData.get("importantNpc") === "on"
-  });
-  let countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
-  const budgetInput = String(formData.get("budget") || "normal");
-  const speciesKeyInput = String(formData.get("species") || "random");
-  let speciesList = DATA_CACHE.speciesEntries || [];
-  if (!speciesList.length) {
-    speciesList = await getSpeciesEntries();
-  }
-  const fixedSpecies =
-    speciesKeyInput !== "random"
-      ? speciesList.find((entry) => entry.key === speciesKeyInput)
-      : null;
-  const fixedEncounterSpecies =
-    encounterSpeciesKey !== "random"
-      ? speciesList.find((entry) => entry.key === encounterSpeciesKey)
-      : null;
-  setLastSpeciesKey(fixedSpecies?.key || "");
-  if (!fixedSpecies && !speciesList.length) {
-    ui.notifications?.warn("NPC Button: No race entries found. Check your compendium packs.");
-  }
-  const includeLoot = formData.get("includeLoot") === "on";
-  const includeSecret = formData.get("includeSecret") === "on";
-  const includeHook = formData.get("includeHook") === "on";
-  const manualImportant = formData.get("importantNpc") === "on";
-
-  if (encounterMode === "encounter") {
-    countInput = Math.max(
-      1,
-      Math.min(
-        50,
-        buildEncounterCount({
-          partyLevel: partyLevelInput,
-          partySize: partySizeInput,
-          difficulty: encounterDifficulty
-        })
-      )
-    );
-    folderId = await ensureEncounterFolder();
-  }
-  setLastFolderId(folderId);
-
-  const encounterPlan =
-    encounterMode === "encounter"
-      ? buildEncounterPlan(countInput, {
-          partyLevel: partyLevelInput,
-          partySize: partySizeInput,
-          difficulty: encounterDifficulty
-        })
-      : null;
-
-  const planned = [];
-  const usedNames = new Set();
-  let archetypePool = shuffleArray(DATA_CACHE.archetypes);
-  for (let i = 0; i < countInput; i++) {
-    const encounterPool =
-      encounterMode === "encounter" && encounterArchetypeKey !== "random"
-        ? DATA_CACHE.archetypes.filter((a) => a.id === encounterArchetypeKey)
+    const tierInput = formData.get("tier");
+    const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
+    const cultureInput = formData.get("culture");
+    const archetypeInput = formData.get("archetype");
+    const folderInput = String(formData.get("folder") || "").trim() || null;
+    let folderId = folderInput;
+    const encounterMode = String(formData.get("encounterMode") || "main");
+    const encounterSpeciesKey = String(formData.get("encounterSpecies") || "random");
+    const encounterArchetypeKey = String(formData.get("encounterArchetype") || "random");
+    const partyLevelInput = Number(formData.get("partyLevel") || 3);
+    const partySizeInput = Number(formData.get("partySize") || 4);
+    const encounterDifficulty = String(formData.get("encounterDifficulty") || "medium");
+    setLastNpcOptions({
+      tier: String(tierInput || "auto"),
+      budget: String(formData.get("budget") || "normal"),
+      culture: String(cultureInput || "random"),
+      archetype: String(archetypeInput || "random"),
+      encounterSpecies: encounterSpeciesKey,
+      encounterArchetype: encounterArchetypeKey,
+      partyLevel: partyLevelInput,
+      partySize: partySizeInput,
+      encounterDifficulty,
+      encounterMode,
+      includeLoot: formData.get("includeLoot") === "on",
+      includeSecret: formData.get("includeSecret") === "on",
+      includeHook: formData.get("includeHook") === "on",
+      importantNpc: formData.get("importantNpc") === "on"
+    });
+    let countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
+    const budgetInput = String(formData.get("budget") || "normal");
+    const speciesKeyInput = String(formData.get("species") || "random");
+    let speciesList = DATA_CACHE.speciesEntries || [];
+    if (!speciesList.length) {
+      speciesList = await getSpeciesEntries();
+    }
+    const fixedSpecies =
+      speciesKeyInput !== "random"
+        ? speciesList.find((entry) => entry.key === speciesKeyInput)
         : null;
-    const useRandomArchetype = encounterMode === "encounter"
-      ? encounterArchetypeKey === "random"
-      : archetypeInput === "random";
-    if (encounterMode === "encounter" && encounterPool && encounterPool.length) {
-      if (!archetypePool.length || archetypePool.some((a) => !encounterPool.includes(a))) {
-        archetypePool = shuffleArray(encounterPool);
+    const fixedEncounterSpecies =
+      encounterSpeciesKey !== "random"
+        ? speciesList.find((entry) => entry.key === encounterSpeciesKey)
+        : null;
+    setLastSpeciesKey(fixedSpecies?.key || "");
+    if (!fixedSpecies && !speciesList.length) {
+      ui.notifications?.warn("NPC Button: No race entries found. Check your compendium packs.");
+    }
+    const includeLoot = formData.get("includeLoot") === "on";
+    const includeSecret = formData.get("includeSecret") === "on";
+    const includeHook = formData.get("includeHook") === "on";
+    const manualImportant = formData.get("importantNpc") === "on";
+
+    if (encounterMode === "encounter") {
+      countInput = Math.max(
+        1,
+        Math.min(
+          50,
+          buildEncounterCount({
+            partyLevel: partyLevelInput,
+            partySize: partySizeInput,
+            difficulty: encounterDifficulty
+          })
+        )
+      );
+      folderId = await ensureEncounterFolder();
+    }
+    setLastFolderId(folderId);
+
+    const encounterPlan =
+      encounterMode === "encounter"
+        ? buildEncounterPlan(countInput, {
+            partyLevel: partyLevelInput,
+            partySize: partySizeInput,
+            difficulty: encounterDifficulty
+          })
+        : null;
+
+    const planned = [];
+    const usedNames = new Set();
+    let archetypePool = shuffleArray(DATA_CACHE.archetypes);
+    for (let i = 0; i < countInput; i++) {
+      const encounterPool =
+        encounterMode === "encounter" && encounterArchetypeKey !== "random"
+          ? DATA_CACHE.archetypes.filter((a) => a.id === encounterArchetypeKey)
+          : null;
+      const useRandomArchetype = encounterMode === "encounter"
+        ? encounterArchetypeKey === "random"
+        : archetypeInput === "random";
+      if (encounterMode === "encounter" && encounterPool && encounterPool.length) {
+        if (!archetypePool.length || archetypePool.some((a) => !encounterPool.includes(a))) {
+          archetypePool = shuffleArray(encounterPool);
+        }
+      }
+      if (useRandomArchetype && !archetypePool.length) {
+        archetypePool = shuffleArray(encounterPool && encounterPool.length ? encounterPool : DATA_CACHE.archetypes);
+      }
+      const archetype = useRandomArchetype
+        ? archetypePool.shift()
+        : encounterMode === "encounter"
+          ? (encounterPool?.[0] || DATA_CACHE.archetypes.find((a) => a.id === encounterArchetypeKey))
+          : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
+      const resolvedArchetype = archetype || DATA_CACHE.archetypes[0];
+
+      const culture =
+        cultureInput === "random"
+          ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
+          : cultureInput;
+
+      const speciesEntry =
+        (encounterMode === "encounter" ? fixedEncounterSpecies : fixedSpecies) ||
+        (speciesList.length ? pickRandom(speciesList) : null);
+      const speciesName = speciesEntry?.name || "Unknown";
+
+      const plannedTier = encounterPlan?.[i]?.tier ?? tier;
+      const importantNpc = encounterPlan?.[i]?.importantNpc ?? manualImportant;
+
+      const generated = generateNpc({
+        tier: plannedTier,
+        archetype: resolvedArchetype,
+        culture,
+        race: speciesName,
+        budget: budgetInput,
+        includeLoot,
+        includeSecret,
+        includeHook,
+        importantNpc,
+        usedNames
+      });
+
+      planned.push({ generated, speciesEntry });
+    }
+
+    const actorDataList = await Promise.all(
+      planned.map((entry) => buildActorData(entry.generated, folderId))
+    );
+
+    const created =
+      typeof Actor.createDocuments === "function"
+        ? await Actor.createDocuments(actorDataList)
+        : await Promise.all(actorDataList.map((data) => Actor.create(data)));
+
+    // Zip planned data with created actors for safer iteration
+    const zipped = planned.map((plan, idx) => ({
+      actor: created[idx],
+      speciesEntry: plan.speciesEntry
+    }));
+    let speciesApplyErrors = 0;
+
+    for (const { actor, speciesEntry } of zipped) {
+      if (!actor || !speciesEntry) continue;
+      try {
+        const speciesItem = await buildSpeciesItem(speciesEntry);
+        if (!speciesItem) continue;
+        const createdItems = await actor.createEmbeddedDocuments("Item", [speciesItem]);
+        const createdItem = createdItems?.[0] || null;
+        if (!createdItem) continue;
+        await actor.update({ "system.details.race": createdItem.id });
+        await applySpeciesTraitsToActor(actor, createdItem);
+        await applySpeciesAdvancements(actor, createdItem);
+      } catch (err) {
+        speciesApplyErrors += 1;
+        console.warn(`NPC Button: Failed to apply species data for actor "${actor?.name || "Unknown"}".`, err);
       }
     }
-    if (useRandomArchetype && !archetypePool.length) {
-      archetypePool = shuffleArray(encounterPool && encounterPool.length ? encounterPool : DATA_CACHE.archetypes);
+    if (speciesApplyErrors) {
+      ui.notifications?.warn(
+        `NPC Button: ${speciesApplyErrors} NPC(s) were created without full species data. Check console.`
+      );
     }
-    const archetype = useRandomArchetype
-      ? archetypePool.shift()
-      : encounterMode === "encounter"
-        ? (encounterPool?.[0] || DATA_CACHE.archetypes.find((a) => a.id === encounterArchetypeKey))
-        : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
-    const resolvedArchetype = archetype || DATA_CACHE.archetypes[0];
 
-    const culture =
-      cultureInput === "random"
-        ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
-        : cultureInput;
-
-    const speciesEntry =
-      (encounterMode === "encounter" ? fixedEncounterSpecies : fixedSpecies) ||
-      (speciesList.length ? pickRandom(speciesList) : null);
-    const speciesName = speciesEntry?.name || "Unknown";
-
-    const plannedTier = encounterPlan?.[i]?.tier ?? tier;
-    const importantNpc = encounterPlan?.[i]?.importantNpc ?? manualImportant;
-
-    const generated = generateNpc({
-      tier: plannedTier,
-      archetype: resolvedArchetype,
-      culture,
-      race: speciesName,
-      budget: budgetInput,
-      includeLoot,
-      includeSecret,
-      includeHook,
-      importantNpc,
-      usedNames
-    });
-
-    planned.push({ generated, speciesEntry });
+    if (created.length === 1) {
+      ui.notifications?.info(`Created NPC: ${created[0]?.name || "Unnamed"}`);
+      return;
+    }
+    const names = created.map((a) => a?.name).filter(Boolean);
+    const preview = names.slice(0, 5).join(", ");
+    const extra = names.length > 5 ? ` +${names.length - 5} more` : "";
+    ui.notifications?.info(`Created ${created.length} NPCs: ${preview}${extra}`);
+  } catch (err) {
+    console.error("NPC Button: Failed to create NPC(s).", err);
+    ui.notifications?.error("NPC Button: NPC generation failed. Check console.");
   }
-
-  const actorDataList = await Promise.all(
-    planned.map((entry) => buildActorData(entry.generated, folderId))
-  );
-
-  const created =
-    typeof Actor.createDocuments === "function"
-      ? await Actor.createDocuments(actorDataList)
-      : await Promise.all(actorDataList.map((data) => Actor.create(data)));
-
-  // Zip planned data with created actors for safer iteration
-  const zipped = planned.map((plan, idx) => ({
-    actor: created[idx],
-    speciesEntry: plan.speciesEntry
-  }));
-
-  for (const { actor, speciesEntry } of zipped) {
-    if (!actor || !speciesEntry) continue;
-
-    const speciesItem = await buildSpeciesItem(speciesEntry);
-    if (!speciesItem) continue;
-    const createdItems = await actor.createEmbeddedDocuments("Item", [speciesItem]);
-    const createdItem = createdItems?.[0] || null;
-    if (!createdItem) continue;
-    await actor.updateSource({ "system.details.race": createdItem.id });
-    await applySpeciesTraitsToActor(actor, createdItem);
-    await applySpeciesAdvancements(actor, createdItem);
-  }
-
-  if (created.length === 1) {
-    ui.notifications?.info(`Created NPC: ${created[0]?.name || "Unnamed"}`);
-    return;
-  }
-  const names = created.map((a) => a?.name).filter(Boolean);
-  const preview = names.slice(0, 5).join(", ");
-  const extra = names.length > 5 ? ` +${names.length - 5} more` : "";
-  ui.notifications?.info(`Created ${created.length} NPCs: ${preview}${extra}`);
 }

@@ -5,6 +5,14 @@
 
 ## 0.5.1
 - Add cantrips for caster NPCs (2-4 by tier)
+- Persist actor changes with `actor.update(...)` for race/species application
+- Fix changelog parsing to reliably extract notes for the current version
+- Add defensive error handling in dialog open/create flows and data loading
+- Add fallback to live pack index when a compendium is missing in cache
+- Escape dynamic HTML in dialog option/content rendering
+- Improve budget selection to honor explicit CP ranges before percentile pick
+- Normalize species/advancement size values to valid dnd5e actor size keys
+- Continue batch NPC creation when species application fails for one actor
 
 ## 0.5.0
 - **Major refactoring**: Split monolithic main.js (3000+ lines) into 9 focused modules

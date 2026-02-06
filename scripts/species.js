@@ -5,10 +5,22 @@
 
 import { COMPENDIUMS } from "./constants.js";
 import { DATA_CACHE } from "./data-loader.js";
-import { pickRandom, normalizeUuid, cloneData, toItemData } from "./utils.js";
+import { pickRandom, normalizeUuid, cloneData, toItemData, escapeHtml } from "./utils.js";
 
 /** Promise for ongoing species load - prevents race condition */
 let SPECIES_LOAD_PROMISE = null;
+const ACTOR_SIZE_ALIASES = {
+  tiny: "tiny",
+  sm: "sm",
+  small: "sm",
+  med: "med",
+  medium: "med",
+  lg: "lg",
+  large: "lg",
+  huge: "huge",
+  grg: "grg",
+  gargantuan: "grg"
+};
 
 /**
  * Get available species packs
@@ -115,7 +127,9 @@ export async function getSpeciesEntries() {
  */
 export async function getSpeciesOptions() {
   const entries = await getSpeciesEntries();
-  return entries.map((e) => `<option value="${e.key}">${e.name}</option>`).join("");
+  return entries
+    .map((e) => `<option value="${escapeHtml(e.key)}">${escapeHtml(e.name)}</option>`)
+    .join("");
 }
 
 /**
@@ -151,12 +165,13 @@ export async function applySpeciesTraitsToActor(actor, speciesItem) {
   const traits = speciesItem.system?.traits || {};
   const sensesFromItem = extractSensesFromSpeciesItem(speciesItem);
   const languagesFromItem = extractLanguagesFromSpeciesItem(speciesItem);
-  const sizeFromItem =
-    traits.size ||
-    traits?.size?.value ||
-    speciesItem.system?.size ||
-    speciesItem.system?.details?.size ||
-    null;
+  const sizeFromItem = normalizeActorSizeValue(
+    traits?.size?.value ??
+    traits?.size ??
+    speciesItem.system?.size ??
+    speciesItem.system?.details?.size ??
+    null
+  );
   const movementFromItem = extractMovementFromSpeciesItem(speciesItem);
 
   if (Object.keys(sensesFromItem).length) {
@@ -181,7 +196,7 @@ export async function applySpeciesTraitsToActor(actor, speciesItem) {
   }
 
   if (Object.keys(update).length) {
-    await actor.updateSource(update);
+    await actor.update(update);
   }
 }
 
@@ -296,7 +311,9 @@ export async function applySpeciesAdvancements(actor, speciesItem) {
     }
 
     if (type.includes("size")) {
-      const size = advData?.configuration?.size || advData?.size || advData?.value;
+      const size = normalizeActorSizeValue(
+        advData?.configuration?.size ?? advData?.size ?? advData?.value ?? null
+      );
       if (size) update["system.traits.size"] = size;
       continue;
     }
@@ -313,8 +330,54 @@ export async function applySpeciesAdvancements(actor, speciesItem) {
   }
 
   if (Object.keys(update).length) {
-    await actor.updateSource(update);
+    await actor.update(update);
   }
+}
+
+/**
+ * Normalize species/advancement size to a valid dnd5e actor size key
+ * @param {*} value - Raw size value
+ * @returns {string|null}
+ */
+export function normalizeActorSizeValue(value) {
+  const knownSizes = new Set(Object.keys(globalThis.CONFIG?.DND5E?.actorSizes || {}));
+  const pickSize = (raw) => {
+    if (raw === null || raw === undefined) return null;
+    const key = String(raw).trim().toLowerCase();
+    if (!key) return null;
+    if (knownSizes.size && knownSizes.has(key)) return key;
+    const mapped = ACTOR_SIZE_ALIASES[key];
+    if (!mapped) return null;
+    if (!knownSizes.size || knownSizes.has(mapped)) return mapped;
+    return null;
+  };
+
+  if (Array.isArray(value)) {
+    for (const part of value) {
+      const normalized = pickSize(part);
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
+  if (value && typeof value === "object") {
+    const preferred = [value.value, value.size, value.key, value.id];
+    for (const part of preferred) {
+      const normalized =
+        pickSize(part) ||
+        ((part && typeof part === "object") ? normalizeActorSizeValue(part) : null);
+      if (normalized) return normalized;
+    }
+    for (const part of Object.values(value)) {
+      const normalized =
+        pickSize(part) ||
+        ((part && typeof part === "object") ? normalizeActorSizeValue(part) : null);
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
+  return pickSize(value);
 }
 
 /**

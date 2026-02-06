@@ -164,9 +164,16 @@ export async function getPackIndex(pack, fields = ["type", "name"]) {
 
   const wantsPrice = fields.some((f) => String(f).includes("system.price"));
   if (USE_COMPENDIUM_CACHE && DATA_CACHE.compendiumCache && !wantsPrice) {
-    DATA_CACHE.packIndex.set(key, []);
     warnMissingCacheOnce(pack.collection);
-    return [];
+    try {
+      const fallbackIndex = await pack.getIndex({ fields });
+      DATA_CACHE.packIndex.set(key, fallbackIndex);
+      return fallbackIndex;
+    } catch (err) {
+      console.warn(`NPC Button: failed to read index for ${pack.collection}`, err);
+      DATA_CACHE.packIndex.set(key, []);
+      return [];
+    }
   }
 
   const index = await pack.getIndex({ fields });
