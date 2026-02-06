@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.5.2
 - Persist actor changes with `actor.update(...)` for race/species application
 - Fix changelog parsing to reliably extract notes for the current version
 - Add defensive error handling in dialog open/create flows and data loading
