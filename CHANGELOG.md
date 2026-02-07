@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.5.4
 - Fix race picker to include only `race/species` compendium entries (exclude racial features like Fey Ancestry/Breath Weapon)
 - Add optional OpenAI flavor generation for NPCs (dialog toggle + batch cap setting)
 - Add GM OpenAI API key config menu with password input and client-local key storage
