@@ -21,6 +21,13 @@ import {
   ensureEncounterFolder
 } from "./encounter.js";
 import { generateNpc, buildActorData } from "./npc-generator.js";
+import {
+  isOpenAiConfigured,
+  getOpenAiMaxBatch,
+  generateNpcFlavorWithOpenAi,
+  generateNpcTokenImageWithOpenAi,
+  openOpenAiApiKeyDialog
+} from "./openai.js";
 
 /**
  * Get actor folder options as HTML
@@ -305,6 +312,7 @@ export async function openNpcDialog() {
     const speciesOptions = await getSpeciesOptions();
     const lastSpeciesKey = getLastSpeciesKey();
     const lastOptions = getLastNpcOptions();
+    const aiReady = isOpenAiConfigured();
 
   const content = `
     <style>
@@ -402,6 +410,20 @@ export async function openNpcDialog() {
           <label class="checkbox"><input type="checkbox" name="includeSecret" checked> Secret</label>
           <label class="checkbox"><input type="checkbox" name="includeHook" checked> Quest hook</label>
           <label class="checkbox"><input type="checkbox" name="importantNpc"> Boss</label>
+          <label class="checkbox">
+            <input type="checkbox" name="includeAiFlavor" ${aiReady ? "" : "disabled"}>
+            AI flavor (OpenAI)
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" name="includeAiToken" ${aiReady ? "" : "disabled"}>
+            AI token from description (OpenAI)
+          </label>
+          <button type="button" data-action="open-ai-key">Set OpenAI API Key</button>
+          <span style="font-size: 0.8rem; opacity: 0.85;">
+            ${aiReady
+              ? "Uses your GM OpenAI key from Module Settings."
+              : "Set your OpenAI API key in Module Settings (Set API Key menu)."}
+          </span>
         </div>
       </div>
       </div>
@@ -545,6 +567,12 @@ export async function openNpcDialog() {
         if (typeof lastOptions.importantNpc === "boolean") {
           form.find("input[name='importantNpc']").prop("checked", lastOptions.importantNpc);
         }
+        if (typeof lastOptions.includeAiFlavor === "boolean") {
+          form.find("input[name='includeAiFlavor']").prop("checked", lastOptions.includeAiFlavor && aiReady);
+        }
+        if (typeof lastOptions.includeAiToken === "boolean") {
+          form.find("input[name='includeAiToken']").prop("checked", lastOptions.includeAiToken && aiReady);
+        }
       }
       const speciesSearch = form.find("input[name='speciesSearch']");
       const speciesSelect = form.find("select[name='species']");
@@ -553,6 +581,9 @@ export async function openNpcDialog() {
       const encounterSpeciesSelect = form.find("select[name='encounterSpecies']");
       const encounterAllOptions = encounterSpeciesSelect.find("option").toArray();
       const archetypeSelect = form.find("select[name='archetype']");
+      form.find("[data-action='open-ai-key']").on("click", () => {
+        openOpenAiApiKeyDialog();
+      });
       form.find("[data-action='roll-archetype']").on("click", () => {
         const opts = archetypeSelect.find("option").toArray().filter((o) => o.value !== "random");
         if (!opts.length) return;
@@ -634,6 +665,8 @@ export async function createNpcFromForm(formData) {
       includeLoot: formData.get("includeLoot") === "on",
       includeSecret: formData.get("includeSecret") === "on",
       includeHook: formData.get("includeHook") === "on",
+      includeAiFlavor: formData.get("includeAiFlavor") === "on",
+      includeAiToken: formData.get("includeAiToken") === "on",
       importantNpc: formData.get("importantNpc") === "on"
     });
     let countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
@@ -658,6 +691,8 @@ export async function createNpcFromForm(formData) {
     const includeLoot = formData.get("includeLoot") === "on";
     const includeSecret = formData.get("includeSecret") === "on";
     const includeHook = formData.get("includeHook") === "on";
+    const includeAiFlavor = formData.get("includeAiFlavor") === "on";
+    const includeAiToken = formData.get("includeAiToken") === "on";
     const manualImportant = formData.get("importantNpc") === "on";
 
     if (encounterMode === "encounter") {
@@ -740,6 +775,52 @@ export async function createNpcFromForm(formData) {
       planned.push({ generated, speciesEntry });
     }
 
+    if (includeAiFlavor) {
+      if (!isOpenAiConfigured()) {
+        ui.notifications?.warn(
+          "NPC Button: OpenAI flavor skipped (enable OpenAI + set API key in Module Settings on this GM browser)."
+        );
+      } else {
+        const aiResult = await applyOpenAiFlavorToPlanned(planned);
+        if (aiResult.applied) {
+          ui.notifications?.info(`NPC Button: OpenAI flavored ${aiResult.applied} NPC(s).`);
+        }
+        if (aiResult.failed) {
+          ui.notifications?.warn(
+            `NPC Button: OpenAI flavor failed for ${aiResult.failed} NPC(s). Used local flavor fallback.`
+          );
+        }
+        if (aiResult.skipped) {
+          ui.notifications?.info(
+            `NPC Button: Skipped OpenAI flavor for ${aiResult.skipped} NPC(s) due to max batch setting.`
+          );
+        }
+      }
+    }
+
+    if (includeAiToken) {
+      if (!isOpenAiConfigured()) {
+        ui.notifications?.warn(
+          "NPC Button: OpenAI token skipped (enable OpenAI + set API key in Module Settings on this GM browser)."
+        );
+      } else {
+        const aiTokenResult = await applyOpenAiTokenToPlanned(planned);
+        if (aiTokenResult.applied) {
+          ui.notifications?.info(`NPC Button: OpenAI generated ${aiTokenResult.applied} token(s).`);
+        }
+        if (aiTokenResult.failed) {
+          ui.notifications?.warn(
+            `NPC Button: OpenAI token failed for ${aiTokenResult.failed} NPC(s). Used local token fallback.`
+          );
+        }
+        if (aiTokenResult.skipped) {
+          ui.notifications?.info(
+            `NPC Button: Skipped OpenAI token for ${aiTokenResult.skipped} NPC(s) due to max batch setting.`
+          );
+        }
+      }
+    }
+
     const actorDataList = await Promise.all(
       planned.map((entry) => buildActorData(entry.generated, folderId))
     );
@@ -789,5 +870,102 @@ export async function createNpcFromForm(formData) {
   } catch (err) {
     console.error("NPC Button: Failed to create NPC(s).", err);
     ui.notifications?.error("NPC Button: NPC generation failed. Check console.");
+  }
+}
+
+/**
+ * Apply OpenAI flavor generation to planned NPCs
+ * @param {Array<{generated: Object}>} planned - Planned NPC list
+ * @returns {Promise<{applied:number, failed:number, skipped:number}>}
+ */
+async function applyOpenAiFlavorToPlanned(planned) {
+  const items = Array.isArray(planned) ? planned : [];
+  if (!items.length) return { applied: 0, failed: 0, skipped: 0 };
+
+  const maxBatch = getOpenAiMaxBatch();
+  const limit = Math.min(items.length, maxBatch);
+  let applied = 0;
+  let failed = 0;
+
+  for (let i = 0; i < limit; i++) {
+    const entry = items[i];
+    if (!entry?.generated) continue;
+    try {
+      const aiFlavor = await generateNpcFlavorWithOpenAi(entry.generated);
+      if (aiFlavor && typeof aiFlavor === "object") {
+        entry.generated = { ...entry.generated, ...aiFlavor };
+        applied += 1;
+      }
+    } catch (err) {
+      failed += 1;
+      console.warn(
+        `NPC Button: OpenAI flavor failed for "${entry.generated?.name || "Unknown NPC"}".`,
+        err
+      );
+    }
+  }
+  ensureUniqueGeneratedNames(items);
+
+  return {
+    applied,
+    failed,
+    skipped: Math.max(0, items.length - limit)
+  };
+}
+
+/**
+ * Apply OpenAI token generation to planned NPCs
+ * @param {Array<{generated: Object}>} planned - Planned NPC list
+ * @returns {Promise<{applied:number, failed:number, skipped:number}>}
+ */
+async function applyOpenAiTokenToPlanned(planned) {
+  const items = Array.isArray(planned) ? planned : [];
+  if (!items.length) return { applied: 0, failed: 0, skipped: 0 };
+
+  const maxBatch = getOpenAiMaxBatch();
+  const limit = Math.min(items.length, maxBatch);
+  let applied = 0;
+  let failed = 0;
+
+  for (let i = 0; i < limit; i++) {
+    const entry = items[i];
+    if (!entry?.generated) continue;
+    try {
+      const tokenImg = await generateNpcTokenImageWithOpenAi(entry.generated);
+      if (tokenImg) {
+        entry.generated.tokenImg = tokenImg;
+        applied += 1;
+      } else {
+        failed += 1;
+      }
+    } catch (err) {
+      failed += 1;
+      console.warn(
+        `NPC Button: OpenAI token generation failed for "${entry.generated?.name || "Unknown NPC"}".`,
+        err
+      );
+    }
+  }
+
+  return {
+    applied,
+    failed,
+    skipped: Math.max(0, items.length - limit)
+  };
+}
+
+function ensureUniqueGeneratedNames(items) {
+  const used = new Set();
+  for (const entry of items || []) {
+    if (!entry?.generated) continue;
+    const base = String(entry.generated.name || "").trim() || "Nameless";
+    let candidate = base;
+    let i = 2;
+    while (used.has(candidate.toLowerCase())) {
+      candidate = `${base} (${i})`;
+      i += 1;
+    }
+    entry.generated.name = candidate;
+    used.add(candidate.toLowerCase());
   }
 }

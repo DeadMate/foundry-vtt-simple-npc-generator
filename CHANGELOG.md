@@ -1,11 +1,21 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Fix race picker to include only `race/species` compendium entries (exclude racial features like Fey Ancestry/Breath Weapon)
+- Add optional OpenAI flavor generation for NPCs (dialog toggle + batch cap setting)
+- Add GM OpenAI API key config menu with password input and client-local key storage
+- Fix OpenAI enable-state persistence by saving toggle per GM client and auto-enabling when API key exists
+- Remove dependency on Module Settings OpenAI checkbox (AI now enabled by presence of GM API key)
+- Add direct "Set OpenAI API Key" button in NPC generator dialog for easier setup
+- Improve OpenAI flavor quality with stricter prompts, longer structured outputs, and automatic retry when output is too fragmentary
+- Expand OpenAI NPC context (race/class/attack style/tags) and allow AI to return improved name, rumor, and mannerism
+- Add checkbox for OpenAI token image generation from NPC description
+- Add dedicated token prompt template with strict race lock (including forged/construct hints)
+- Upload generated AI tokens to `worlds/<world-id>/npc-button-5e/tokens`
+- Add documentation for custom local token assets and AI usage/cost disclaimer
 
 ## 0.5.3
-- TODO: describe changes
-- Fix race picker to include only `race/species` compendium entries (exclude racial features like Fey Ancestry/Breath Weapon)
+- Maintenance release metadata update.
 
 ## 0.5.2
 - Persist actor changes with `actor.update(...)` for race/species application

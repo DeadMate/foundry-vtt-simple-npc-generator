@@ -19,17 +19,33 @@ One-click NPC generator for Foundry VTT. Creates a ready-to-play 5e NPC with sta
 - Encounter mode (auto-balanced count/tier, Encounter-N folders)
 - Optional folder placement (remembers last used)
 - Optional loot, secrets, quest hooks
+- Optional OpenAI flavor generation (GM-only API key, stored locally in GM browser)
+- Optional OpenAI token image generation from NPC description
 - Compendium cache builder (faster, uses all Item compendiums)
 
 ## Usage
 1) Open the Actors sidebar and click **NPC Button**.
 2) (Recommended) Click **Build Compendium Cache** once as GM.
-3) Create NPCs.
+3) (Optional, AI) In **Module Settings → NPC Button (D&D 5e)**:
+   - Set text/image model and base URL if needed
+   - Click **Set API Key** and paste your key (saved in GM client setting only)
+4) Create NPCs (toggle **AI flavor (OpenAI)** and/or **AI token from description (OpenAI)** in dialog options).
+
+## Custom Tokens
+- Default local token folder: `modules/npc-button-5e/assets/tokens/`
+- To use your own local tokens, add files there and update `TOKEN_ASSETS` in `scripts/constants.js`.
+- Archetype-to-token-style matching is configured by `TOKEN_ROLE_MAP` in `scripts/constants.js`.
+- Detailed guide: `docs/custom-tokens.md`
+
+## AI Cost & Responsibility
+- OpenAI features (flavor and token image generation) use paid API calls.
+- You are responsible for your OpenAI account, usage limits, billing, and generated content.
+- This module author does not provide cost reimbursement and is not liable for third-party API charges or output.
 
 ## Release Notes (Dev)
 - Before pushing, update the **Unreleased** section in `CHANGELOG.md`.
 - The release workflow bumps the version only if module files changed:
-  `module.json`, `scripts/`, `data/`, or `assets/`.
+  `module.json`, `scripts/`, `data/`, `assets/`, or `templates/`.
 
 ## Requirements
 - Foundry VTT

@@ -1,0 +1,30 @@
+<form>
+  <div class="form-group">
+    <label>API Key</label>
+    <div class="form-fields">
+      <input type="password" name="apiKey" autocomplete="off" placeholder="sk-..." />
+    </div>
+    <p class="notes">
+      Stored only in this browser as a client setting for this GM user.
+    </p>
+  </div>
+
+  {{#if hasKey}}
+  <div class="form-group">
+    <label>Current Key</label>
+    <div class="form-fields">
+      <input type="text" value="{{keyPreview}}" disabled />
+    </div>
+    <p class="notes">Only a masked preview is shown.</p>
+  </div>
+  {{/if}}
+
+  <div class="form-group">
+    <label>Clear saved key</label>
+    <div class="form-fields">
+      <input type="checkbox" name="clearKey" />
+    </div>
+  </div>
+
+  <button type="submit" style="display: none;"></button>
+</form>

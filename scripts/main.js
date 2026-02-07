@@ -1,7 +1,10 @@
 import { MODULE_ID } from "./constants.js";
+import { registerOpenAiSettings } from "./openai.js";
 import { addNpcButton, showChangelogIfUpdated } from "./ui.js";
 
 Hooks.once("init", () => {
+  registerOpenAiSettings();
+
   game.settings.register(MODULE_ID, "lastFolderId", {
     scope: "client",
     config: false,

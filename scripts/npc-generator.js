@@ -82,6 +82,7 @@ export function generateNpc(options) {
   const secret = includeSecret ? pickRandomOr(traits?.secrets, null) : null;
   const hook = includeHook ? pickRandomOr(traits?.hooks, null) : null;
   const quirk = pickRandomOr(traits?.quirks, "Unremarkable");
+  const className = getClassForArchetype(archetype);
 
   const abilities = applyTierToAbilities(varyBaseAbilities(archetype.baseAbilities), tier, importantNpc);
   const prime = getPrimeAbilities(abilities);
@@ -98,12 +99,16 @@ export function generateNpc(options) {
   return {
     name,
     archetype,
+    className,
+    attackStyle: archetype?.attackStyle || "",
+    archetypeTags: Array.isArray(archetype?.tags) ? archetype.tags.slice() : [],
     tier,
     cr,
     prof,
     ac,
     hp,
     speed,
+    culture,
     race,
     budget,
     abilities,
@@ -299,7 +304,7 @@ export function buildLoot(archetype, tier) {
  * @returns {Promise<Object>}
  */
 export async function buildActorData(npc, folderId = null) {
-  const tokenImg = getTokenImageForNpc(npc);
+  const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
 
   const biography = buildBiography(npc);
   const alignment = pickRandom([
@@ -387,12 +392,15 @@ export async function buildActorData(npc, folderId = null) {
 export function buildBiography(npc) {
   const lines = [];
   lines.push(`<p><strong>Role:</strong> ${npc.archetype.name} (Tier ${npc.tier}, CR ${npc.cr})</p>`);
+  if (npc.className) lines.push(`<p><strong>Class:</strong> ${npc.className}</p>`);
   lines.push(`<p><strong>Race:</strong> ${npc.race}</p>`);
   lines.push(`<p><strong>Appearance:</strong> ${npc.appearance.join(", ")}</p>`);
   lines.push(`<p><strong>Speech:</strong> ${npc.speech}</p>`);
   lines.push(`<p><strong>Motivation:</strong> ${npc.motivation}</p>`);
   if (npc.secret) lines.push(`<p><strong>Secret:</strong> ${npc.secret}</p>`);
   if (npc.hook) lines.push(`<p><strong>Hook:</strong> ${npc.hook}</p>`);
+  if (npc.rumor) lines.push(`<p><strong>Rumor:</strong> ${npc.rumor}</p>`);
+  if (npc.mannerism) lines.push(`<p><strong>Mannerism:</strong> ${npc.mannerism}</p>`);
   lines.push(`<p><strong>Quirk:</strong> ${npc.quirk}</p>`);
   return lines.join("\n");
 }
