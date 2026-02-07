@@ -2,6 +2,9 @@
 
 ## Unreleased
 - TODO: describe changes
+
+## 0.5.3
+- TODO: describe changes
 - Fix race picker to include only `race/species` compendium entries (exclude racial features like Fey Ancestry/Breath Weapon)
 
 ## 0.5.2
