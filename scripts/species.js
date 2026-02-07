@@ -9,6 +9,7 @@ import { pickRandom, normalizeUuid, cloneData, toItemData, escapeHtml } from "./
 
 /** Promise for ongoing species load - prevents race condition */
 let SPECIES_LOAD_PROMISE = null;
+const SPECIES_ITEM_TYPES = new Set(["race", "species"]);
 const ACTOR_SIZE_ALIASES = {
   tiny: "tiny",
   sm: "sm",
@@ -89,17 +90,10 @@ export async function getSpeciesEntries() {
       const pack = game.packs?.get(packName);
       if (!pack) continue;
       const index = await pack.getIndex({ fields: ["type", "name"] });
-      const label = String(pack.metadata?.label || "").toLowerCase();
-      const collection = String(pack.collection || "").toLowerCase();
-      const isRacePack =
-        label.includes("race") ||
-        label.includes("species") ||
-        collection.includes("race") ||
-        collection.includes("species");
       for (const entry of index) {
         if (!entry?.name) continue;
         const type = String(entry.type || "").toLowerCase();
-        if (!isRacePack && type && type !== "race" && type !== "species") continue;
+        if (!SPECIES_ITEM_TYPES.has(type)) continue;
         entries.push({
           key: `${pack.collection}|${entry._id}`,
           pack: pack.collection,

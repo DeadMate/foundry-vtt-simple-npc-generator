@@ -2,6 +2,7 @@
 
 ## Unreleased
 - TODO: describe changes
+- Fix race picker to include only `race/species` compendium entries (exclude racial features like Fey Ancestry/Breath Weapon)
 
 ## 0.5.2
 - Persist actor changes with `actor.update(...)` for race/species application
