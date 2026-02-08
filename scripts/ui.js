@@ -20,10 +20,11 @@ import {
   buildEncounterPlan,
   ensureEncounterFolder
 } from "./encounter.js";
-import { generateNpc, buildActorData } from "./npc-generator.js";
+import { generateNpc, buildActorData, buildActorDataFromAiBlueprint } from "./npc-generator.js";
 import {
   isOpenAiConfigured,
   getOpenAiMaxBatch,
+  generateFullNpcWithOpenAi,
   generateNpcFlavorWithOpenAi,
   generateNpcTokenImageWithOpenAi,
   openOpenAiApiKeyDialog
@@ -324,6 +325,10 @@ export async function openNpcDialog() {
       .npc-btn-panel .form-fields { gap: 0.5rem; }
       .npc-btn-panel .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
       .npc-btn-panel select, .npc-btn-panel input[type="text"], .npc-btn-panel input[type="number"] { width: 100%; }
+      .npc-btn-ai-controls { display: none; flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+      .npc-btn-ai-group .form-fields { flex-direction: column; align-items: flex-start; }
+      .npc-btn-dialog-buttons { display: flex !important; gap: 0.4rem; }
+      .npc-btn-dialog-buttons .dialog-button { margin: 0; width: 100%; flex: 1 1 0; white-space: nowrap; }
     </style>
     <form class="npc-btn-form">
       <input type="hidden" name="encounterMode" value="main">
@@ -410,20 +415,6 @@ export async function openNpcDialog() {
           <label class="checkbox"><input type="checkbox" name="includeSecret" checked> Secret</label>
           <label class="checkbox"><input type="checkbox" name="includeHook" checked> Quest hook</label>
           <label class="checkbox"><input type="checkbox" name="importantNpc"> Boss</label>
-          <label class="checkbox">
-            <input type="checkbox" name="includeAiFlavor" ${aiReady ? "" : "disabled"}>
-            AI flavor (OpenAI)
-          </label>
-          <label class="checkbox">
-            <input type="checkbox" name="includeAiToken" ${aiReady ? "" : "disabled"}>
-            AI token from description (OpenAI)
-          </label>
-          <button type="button" data-action="open-ai-key">Set OpenAI API Key</button>
-          <span style="font-size: 0.8rem; opacity: 0.85;">
-            ${aiReady
-              ? "Uses your GM OpenAI key from Module Settings."
-              : "Set your OpenAI API key in Module Settings (Set API Key menu)."}
-          </span>
         </div>
       </div>
       </div>
@@ -476,6 +467,31 @@ export async function openNpcDialog() {
         </div>
       </div>
       </div>
+      <div class="form-group npc-btn-ai-group">
+        <label>AI</label>
+        <div class="form-fields">
+          <label class="checkbox"><input type="checkbox" name="useAi"> Use AI (OpenAI)</label>
+          <div class="npc-btn-ai-controls" data-ai-controls>
+            <button type="button" data-action="open-ai-key">Set OpenAI API Key</button>
+            <label class="checkbox">
+              <input type="checkbox" name="includeAiFlavor" ${aiReady ? "" : "disabled"}>
+              AI flavor (OpenAI)
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" name="includeAiToken" ${aiReady ? "" : "disabled"}>
+              AI token from description (OpenAI)
+            </label>
+            <span style="font-size: 0.8rem; opacity: 0.85;">
+              ${aiReady
+                ? "Uses your GM OpenAI key from Module Settings."
+                : "Set your OpenAI API key in Module Settings (Set API Key menu)."}
+            </span>
+            <span style="font-size: 0.8rem; opacity: 0.85;">
+              Button <strong>Create AI NPC</strong> builds full AI NPC (stats + gear + spells via compendium lookup).
+            </span>
+          </div>
+        </div>
+      </div>
     </form>
   `;
 
@@ -497,6 +513,14 @@ export async function openNpcDialog() {
           await createNpcFromForm(formData);
         }
       },
+      createAi: {
+        label: "Create AI NPC",
+        callback: async (html) => {
+          const form = html.find("form")[0];
+          const formData = new FormData(form);
+          await createNpcFromForm(formData, { aiFull: true });
+        }
+      },
       cancel: { label: "Cancel" }
     },
     default: "create",
@@ -506,11 +530,17 @@ export async function openNpcDialog() {
       const tabPanels = form.find("[data-tab-panel]");
       const encounterModeInput = form.find("input[name='encounterMode']");
       const createButton = html.find("button[data-button='create']");
+      const createAiButton = html.find("button[data-button='createAi']");
+      const dialogButtons = html.closest(".dialog").find(".dialog-buttons");
+      dialogButtons.addClass("npc-btn-dialog-buttons");
+      createAiButton.hide();
       const updateCreateLabel = () => {
         if (encounterModeInput.val() === "encounter") {
           createButton.text("Create Encounter");
+          createAiButton.text("Create AI Encounter");
         } else {
           createButton.text("Create NPC");
+          createAiButton.text("Create AI NPC");
         }
       };
       tabButtons.on("click", (ev) => {
@@ -567,6 +597,15 @@ export async function openNpcDialog() {
         if (typeof lastOptions.importantNpc === "boolean") {
           form.find("input[name='importantNpc']").prop("checked", lastOptions.importantNpc);
         }
+        if (typeof lastOptions.useAi === "boolean") {
+          form.find("input[name='useAi']").prop("checked", lastOptions.useAi);
+        } else if (
+          lastOptions.includeAiFull === true ||
+          lastOptions.includeAiFlavor === true ||
+          lastOptions.includeAiToken === true
+        ) {
+          form.find("input[name='useAi']").prop("checked", true);
+        }
         if (typeof lastOptions.includeAiFlavor === "boolean") {
           form.find("input[name='includeAiFlavor']").prop("checked", lastOptions.includeAiFlavor && aiReady);
         }
@@ -581,9 +620,35 @@ export async function openNpcDialog() {
       const encounterSpeciesSelect = form.find("select[name='encounterSpecies']");
       const encounterAllOptions = encounterSpeciesSelect.find("option").toArray();
       const archetypeSelect = form.find("select[name='archetype']");
+      const useAiToggle = form.find("input[name='useAi']");
+      const aiControls = form.find("[data-ai-controls]");
+      const includeAiFlavorInput = form.find("input[name='includeAiFlavor']");
+      const includeAiTokenInput = form.find("input[name='includeAiToken']");
       form.find("[data-action='open-ai-key']").on("click", () => {
         openOpenAiApiKeyDialog();
       });
+      const updateAiUi = () => {
+        const useAi = !!useAiToggle.prop("checked");
+        aiControls.toggle(useAi);
+        createAiButton.toggle(useAi);
+        if (!useAi) {
+          createAiButton.prop("disabled", false);
+          createAiButton.attr("title", "");
+          return;
+        }
+        if (!aiReady) {
+          createAiButton.prop("disabled", true);
+          createAiButton.attr("title", "Set OpenAI API key first.");
+        } else {
+          createAiButton.prop("disabled", false);
+          createAiButton.attr("title", "");
+        }
+      };
+      if (!aiReady) {
+        includeAiFlavorInput.prop("disabled", true);
+        includeAiTokenInput.prop("disabled", true);
+      }
+      useAiToggle.on("change", updateAiUi);
       form.find("[data-action='roll-archetype']").on("click", () => {
         const opts = archetypeSelect.find("option").toArray().filter((o) => o.value !== "random");
         if (!opts.length) return;
@@ -618,6 +683,7 @@ export async function openNpcDialog() {
       encounterDifficulty.on("change", refreshEncounterCount);
       refreshEncounterCount();
       updateCreateLabel();
+      updateAiUi();
     }
     }).render(true);
   } catch (err) {
@@ -629,8 +695,9 @@ export async function openNpcDialog() {
 /**
  * Create NPCs from form data
  * @param {FormData} formData - Form data
+ * @param {Object} [options] - Extra generation options
  */
-export async function createNpcFromForm(formData) {
+export async function createNpcFromForm(formData, options = {}) {
   try {
     await loadData();
 
@@ -638,6 +705,9 @@ export async function createNpcFromForm(formData) {
       ui.notifications?.error("NPC Button: No archetypes found. Check data/archetypes.json.");
       return;
     }
+    const useAiRequested = formData.get("useAi") === "on";
+    const useAiFullRequested = options?.aiFull === true;
+    const useAiFull = useAiRequested && useAiFullRequested;
 
     const tierInput = formData.get("tier");
     const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
@@ -662,11 +732,13 @@ export async function createNpcFromForm(formData) {
       partySize: partySizeInput,
       encounterDifficulty,
       encounterMode,
+      useAi: useAiRequested,
       includeLoot: formData.get("includeLoot") === "on",
       includeSecret: formData.get("includeSecret") === "on",
       includeHook: formData.get("includeHook") === "on",
       includeAiFlavor: formData.get("includeAiFlavor") === "on",
       includeAiToken: formData.get("includeAiToken") === "on",
+      includeAiFull: useAiFullRequested,
       importantNpc: formData.get("importantNpc") === "on"
     });
     let countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
@@ -691,9 +763,22 @@ export async function createNpcFromForm(formData) {
     const includeLoot = formData.get("includeLoot") === "on";
     const includeSecret = formData.get("includeSecret") === "on";
     const includeHook = formData.get("includeHook") === "on";
-    const includeAiFlavor = formData.get("includeAiFlavor") === "on";
-    const includeAiToken = formData.get("includeAiToken") === "on";
+    const includeAiFlavor = useAiRequested && formData.get("includeAiFlavor") === "on";
+    const includeAiToken = useAiRequested && formData.get("includeAiToken") === "on";
     const manualImportant = formData.get("importantNpc") === "on";
+    const aiReady = isOpenAiConfigured();
+
+    if (useAiFullRequested && !useAiRequested) {
+      ui.notifications?.warn("NPC Button: Enable 'Use AI' to use Create AI NPC.");
+      return;
+    }
+
+    if (useAiFull && !aiReady) {
+      ui.notifications?.warn(
+        "NPC Button: Full AI generation requires OpenAI API key in Module Settings on this GM browser."
+      );
+      return;
+    }
 
     if (encounterMode === "encounter") {
       countInput = Math.max(
@@ -722,6 +807,10 @@ export async function createNpcFromForm(formData) {
 
     const planned = [];
     const usedNames = new Set();
+    const aiFullMaxBatch = useAiFull ? getOpenAiMaxBatch() : 0;
+    let aiFullApplied = 0;
+    let aiFullFailed = 0;
+    let aiFullSkipped = 0;
     let archetypePool = shuffleArray(DATA_CACHE.archetypes);
     for (let i = 0; i < countInput; i++) {
       const encounterPool =
@@ -754,12 +843,12 @@ export async function createNpcFromForm(formData) {
       const speciesEntry =
         (encounterMode === "encounter" ? fixedEncounterSpecies : fixedSpecies) ||
         (speciesList.length ? pickRandom(speciesList) : null);
+      const hasFixedSpecies = encounterMode === "encounter" ? !!fixedEncounterSpecies : !!fixedSpecies;
       const speciesName = speciesEntry?.name || "Unknown";
 
       const plannedTier = encounterPlan?.[i]?.tier ?? tier;
       const importantNpc = encounterPlan?.[i]?.importantNpc ?? manualImportant;
-
-      const generated = generateNpc({
+      const localGenerated = generateNpc({
         tier: plannedTier,
         archetype: resolvedArchetype,
         culture,
@@ -772,11 +861,80 @@ export async function createNpcFromForm(formData) {
         usedNames
       });
 
-      planned.push({ generated, speciesEntry });
+      if (!useAiFull) {
+        planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+        continue;
+      }
+
+      if (i >= aiFullMaxBatch) {
+        aiFullSkipped += 1;
+        planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+        continue;
+      }
+
+      try {
+        const aiGenerated = await generateFullNpcWithOpenAi({
+          tier: plannedTier,
+          culture,
+          race: speciesName,
+          budget: budgetInput,
+          includeLoot,
+          includeSecret,
+          includeHook,
+          importantNpc,
+          encounterDifficulty,
+          archetypeName: resolvedArchetype?.name || "",
+          attackStyle: resolvedArchetype?.attackStyle || "",
+          archetypeTags: Array.isArray(resolvedArchetype?.tags) ? resolvedArchetype.tags : [],
+          allowedSkillIds: Object.keys(CONFIG?.DND5E?.skills || {})
+        });
+
+        if (!aiGenerated || typeof aiGenerated !== "object") {
+          aiFullFailed += 1;
+          planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+          continue;
+        }
+
+        aiGenerated.includeLoot = includeLoot;
+        aiGenerated.includeSecret = includeSecret;
+        aiGenerated.includeHook = includeHook;
+        aiGenerated.importantNpc = importantNpc;
+        aiGenerated.budget = aiGenerated.budget || budgetInput;
+        aiGenerated.tier = Number(aiGenerated.tier || plannedTier) || plannedTier;
+
+        const aiSpeciesEntry = findSpeciesEntryByRace(speciesList, aiGenerated.race);
+        const finalSpeciesEntry = aiSpeciesEntry || (hasFixedSpecies ? speciesEntry : null);
+        if (!aiGenerated.race && finalSpeciesEntry?.name) {
+          aiGenerated.race = finalSpeciesEntry.name;
+        }
+
+        aiFullApplied += 1;
+        planned.push({ generated: aiGenerated, speciesEntry: finalSpeciesEntry, generationMode: "ai-full" });
+      } catch (err) {
+        aiFullFailed += 1;
+        console.warn(`NPC Button: OpenAI full NPC generation failed for slot ${i + 1}.`, err);
+        planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+      }
     }
 
-    if (includeAiFlavor) {
-      if (!isOpenAiConfigured()) {
+    if (useAiFull) {
+      if (aiFullApplied) {
+        ui.notifications?.info(`NPC Button: OpenAI full-generated ${aiFullApplied} NPC(s).`);
+      }
+      if (aiFullFailed) {
+        ui.notifications?.warn(
+          `NPC Button: OpenAI full generation failed for ${aiFullFailed} NPC(s). Used local fallback generation.`
+        );
+      }
+      if (aiFullSkipped) {
+        ui.notifications?.info(
+          `NPC Button: Skipped full AI generation for ${aiFullSkipped} NPC(s) due to max batch setting.`
+        );
+      }
+    }
+
+    if (!useAiFull && includeAiFlavor) {
+      if (!aiReady) {
         ui.notifications?.warn(
           "NPC Button: OpenAI flavor skipped (enable OpenAI + set API key in Module Settings on this GM browser)."
         );
@@ -799,7 +957,7 @@ export async function createNpcFromForm(formData) {
     }
 
     if (includeAiToken) {
-      if (!isOpenAiConfigured()) {
+      if (!aiReady) {
         ui.notifications?.warn(
           "NPC Button: OpenAI token skipped (enable OpenAI + set API key in Module Settings on this GM browser)."
         );
@@ -821,9 +979,34 @@ export async function createNpcFromForm(formData) {
       }
     }
 
-    const actorDataList = await Promise.all(
-      planned.map((entry) => buildActorData(entry.generated, folderId))
+    const buildResults = await Promise.all(
+      planned.map(async (entry) => {
+        if (entry.generationMode === "ai-full") {
+          const result = await buildActorDataFromAiBlueprint(entry.generated, folderId);
+          return {
+            actorData: result?.actorData,
+            resolvedItems: Number(result?.resolvedItems || 0),
+            missingItems: Number(result?.missingItems || 0)
+          };
+        }
+        return {
+          actorData: await buildActorData(entry.generated, folderId),
+          resolvedItems: 0,
+          missingItems: 0
+        };
+      })
     );
+    const actorDataList = buildResults.map((entry) => entry.actorData);
+    const resolvedAiItems = buildResults.reduce((sum, entry) => sum + Number(entry.resolvedItems || 0), 0);
+    const missingAiItems = buildResults.reduce((sum, entry) => sum + Number(entry.missingItems || 0), 0);
+    if (useAiFull && resolvedAiItems) {
+      ui.notifications?.info(`NPC Button: Matched ${resolvedAiItems} AI-requested item(s) from compendiums.`);
+    }
+    if (useAiFull && missingAiItems) {
+      ui.notifications?.warn(
+        `NPC Button: Could not match ${missingAiItems} AI-requested item(s) in compendiums.`
+      );
+    }
 
     const created =
       typeof Actor.createDocuments === "function"
@@ -968,4 +1151,28 @@ function ensureUniqueGeneratedNames(items) {
     entry.generated.name = candidate;
     used.add(candidate.toLowerCase());
   }
+}
+
+function findSpeciesEntryByRace(speciesEntries, raceName) {
+  const list = Array.isArray(speciesEntries) ? speciesEntries : [];
+  if (!list.length) return null;
+
+  const target = normalizeRaceNameForMatch(raceName);
+  if (!target) return null;
+
+  const exact = list.find((entry) => normalizeRaceNameForMatch(entry?.name) === target);
+  if (exact) return exact;
+
+  const contains = list.find((entry) => {
+    const name = normalizeRaceNameForMatch(entry?.name);
+    return name && (name.includes(target) || target.includes(name));
+  });
+  return contains || null;
+}
+
+function normalizeRaceNameForMatch(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9]/gi, "")
+    .trim();
 }

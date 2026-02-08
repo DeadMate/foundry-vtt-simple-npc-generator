@@ -1,7 +1,11 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Add `Use AI` toggle that reveals AI controls and `Create AI NPC` (works for main and encounter flows).
+- Align dialog footer buttons so `Create AI NPC` matches other action buttons visually.
+- Switch full-AI NPC generation to strict JSON schema/field-order prompt and map new fields (`class`, `stats`, `items`, `actions`, `personality`, `description`).
+- Improve full-AI import flow with compendium item resolution, race/species matching, and AI-provided alignment support.
+- Reduce token generation defaults to lower-cost mode (`gpt-image-1-mini` + `quality: low`).
 
 ## 0.5.4
 - Fix race picker to include only `race/species` compendium entries (exclude racial features like Fey Ancestry/Breath Weapon)

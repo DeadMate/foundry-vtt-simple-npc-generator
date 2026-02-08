@@ -385,6 +385,369 @@ export async function buildActorData(npc, folderId = null) {
 }
 
 /**
+ * Build actor data from AI full blueprint (resolves named content via compendiums)
+ * @param {Object} blueprint - AI full NPC blueprint
+ * @param {string|null} folderId - Folder ID
+ * @returns {Promise<{actorData: Object, resolvedItems: number, missingItems: number}>}
+ */
+export async function buildActorDataFromAiBlueprint(blueprint, folderId = null) {
+  const npc = normalizeAiBlueprintForActor(blueprint);
+  const { items, resolvedItems, missingItems } = await resolveAiBlueprintItems(npc);
+
+  if (!items.some((item) => String(item?.type || "").toLowerCase() === "weapon")) {
+    const fallbackWeapon = await buildWeaponItem(npc);
+    if (fallbackWeapon) items.push(fallbackWeapon);
+  }
+
+  normalizeArmorItems(items);
+
+  const biography = buildBiography(npc);
+  const alignment = String(npc.alignment || "").trim() || pickRandom([
+    "Lawful Good",
+    "Neutral Good",
+    "Chaotic Good",
+    "Lawful Neutral",
+    "Neutral",
+    "Chaotic Neutral",
+    "Lawful Evil",
+    "Neutral Evil",
+    "Chaotic Evil"
+  ]);
+
+  const abilityData = {};
+  for (const [key, value] of Object.entries(npc.abilities || {})) {
+    abilityData[key] = { value: Number(value) || 10 };
+  }
+  const skillsData = buildSkillsData(npc.skillIds || npc.archetype.skills || []);
+
+  const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
+  const actorData = {
+    name: npc.name,
+    type: "npc",
+    folder: folderId || undefined,
+    img: tokenImg,
+    prototypeToken: {
+      name: npc.name,
+      img: tokenImg,
+      displayName: 20,
+      disposition: 0
+    },
+    system: {
+      abilities: abilityData,
+      skills: skillsData,
+      attributes: {
+        ac: { value: npc.ac },
+        hp: { value: npc.hp, max: npc.hp, temp: 0 },
+        movement: { walk: npc.speed },
+        prof: npc.prof
+      },
+      details: {
+        cr: npc.cr,
+        alignment,
+        race: npc.race,
+        type: { value: "humanoid", subtype: "" },
+        biography: { value: biography }
+      },
+      traits: {
+        size: "med",
+        languages: { value: [] }
+      },
+      currency: npc.currency || { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 }
+    },
+    items
+  };
+
+  return { actorData, resolvedItems, missingItems };
+}
+
+function normalizeAiBlueprintForActor(blueprint) {
+  const source = blueprint && typeof blueprint === "object" ? blueprint : {};
+  const tier = clampRange(source.tier, 1, 4, 1);
+  const attackStyle = normalizeAttackStyle(source.attackStyle);
+  const skillIds = normalizeSkillIdsForActor(source.skillIds || source.skills);
+  const tags = normalizeTagListForActor(source.archetypeTags || source.tags, attackStyle);
+  const className = String(source.className || getClassForArchetype({ tags }) || "Fighter").trim() || "Fighter";
+  const archetypeName =
+    String(source.archetypeName || source.archetype?.name || `${className} Operative`).trim() ||
+    `${className} Operative`;
+
+  const abilities = normalizeAbilityScoresForActor(source.abilities, tier);
+
+  return {
+    name: String(source.name || "Nameless").trim() || "Nameless",
+    archetype: {
+      id: "ai-full",
+      name: archetypeName,
+      attackStyle,
+      tags,
+      skills: skillIds,
+      baseAbilities: cloneData(abilities)
+    },
+    className,
+    attackStyle,
+    archetypeTags: tags,
+    tier,
+    cr: normalizeCrForActor(source.cr, tier),
+    prof: clampRange(source.prof, 2, 6, getProfBonus(tier)),
+    ac: clampRange(source.ac, 10, 24, 12 + tier),
+    hp: clampRange(source.hp, 4, 300, 10 + tier * 12),
+    speed: clampRange(source.speed, 20, 60, 30),
+    culture: String(source.culture || "").trim(),
+    alignment: String(source.alignment || "").trim(),
+    race: String(source.race || "Humanoid").trim() || "Humanoid",
+    budget: String(source.budget || "normal").trim() || "normal",
+    abilities,
+    prime: getPrimeAbilities(abilities),
+    appearance: normalizeStringArrayForActor(source.appearance, 4, 100, ["steady gaze", "travel-worn outfit"]),
+    speech: String(source.speech || "Speaks with measured confidence.").trim(),
+    motivation: String(source.motivation || "Pursues a practical objective with urgency.").trim(),
+    secret: source.secret ? String(source.secret).trim() : null,
+    hook: source.hook ? String(source.hook).trim() : null,
+    quirk: String(source.quirk || "Keeps strict routines in tense moments.").trim(),
+    rumor: source.rumor ? String(source.rumor).trim() : null,
+    mannerism: source.mannerism ? String(source.mannerism).trim() : null,
+    currency: normalizeCurrencyForActor(source.currency),
+    includeLoot: source.includeLoot !== false,
+    includeSecret: source.includeSecret !== false,
+    includeHook: source.includeHook !== false,
+    importantNpc: !!source.importantNpc,
+    tokenImg: String(source.tokenImg || "").trim() || "",
+    aiItems: normalizeAiItemGroups(source.items || source.aiItems || source)
+  };
+}
+
+async function resolveAiBlueprintItems(npc) {
+  const aiItems = npc.aiItems || {};
+  const budget = npc.budget || "normal";
+  const allGearPacks = uniquePackNames([...getPacks("weapons"), ...getPacks("loot")]);
+  const featurePacks = uniquePackNames([...getPacks("classFeatures"), ...getPacks("features")]);
+  const groups = [
+    {
+      names: aiItems.weapons,
+      packs: getPacks("weapons"),
+      allowedTypes: ["weapon", "equipment"],
+      equip: true
+    },
+    {
+      names: aiItems.armor,
+      packs: allGearPacks,
+      allowedTypes: ["equipment"],
+      equip: true
+    },
+    {
+      names: aiItems.equipment,
+      packs: allGearPacks,
+      allowedTypes: ["equipment", "loot", "consumable"]
+    },
+    {
+      names: aiItems.consumables,
+      packs: getPacks("loot"),
+      allowedTypes: ["consumable", "loot", "equipment"]
+    },
+    {
+      names: aiItems.loot,
+      packs: getPacks("loot"),
+      allowedTypes: ["loot", "consumable", "equipment"]
+    },
+    {
+      names: aiItems.spells,
+      packs: getPacks("spells"),
+      allowedTypes: ["spell"]
+    },
+    {
+      names: aiItems.features,
+      packs: featurePacks,
+      allowedTypes: ["feat"],
+      ensureFeatureActivities: true
+    }
+  ];
+
+  const items = [];
+  const addedNames = new Set();
+  let resolvedItems = 0;
+  let missingItems = 0;
+
+  for (const group of groups) {
+    for (const rawName of group.names || []) {
+      const name = String(rawName || "").trim();
+      if (!name) continue;
+
+      const item = await resolveAiNamedItem(name, group, budget);
+      if (!item) {
+        missingItems += 1;
+        continue;
+      }
+
+      const dedupeName = String(item.name || "").trim().toLowerCase();
+      if (!dedupeName || addedNames.has(dedupeName)) continue;
+      addedNames.add(dedupeName);
+      items.push(item);
+      resolvedItems += 1;
+    }
+  }
+
+  return { items, resolvedItems, missingItems };
+}
+
+async function resolveAiNamedItem(name, group, budget) {
+  const packs = Array.isArray(group?.packs) ? group.packs : [];
+  const allowedTypes = Array.isArray(group?.allowedTypes) ? group.allowedTypes : [];
+  if (!packs.length || !allowedTypes.length) return null;
+
+  const exact = await getItemByNameFromPacks(packs, name);
+  if (exact && allowedTypes.includes(String(exact.type || "").toLowerCase())) {
+    return prepareResolvedAiItem(exact, group);
+  }
+
+  const keywords = buildLookupKeywordsFromName(name);
+  if (!keywords.length) return null;
+
+  const fuzzy = await getRandomItemByKeywordsFromAllPacksWithBudget(
+    packs,
+    keywords,
+    (entry) => allowedTypes.includes(String(entry.type || "").toLowerCase()),
+    budget,
+    true
+  );
+  if (!fuzzy) return null;
+  return prepareResolvedAiItem(fuzzy, group);
+}
+
+function prepareResolvedAiItem(itemDoc, group) {
+  const item = cloneItemData(toItemData(itemDoc));
+  if (!item) return null;
+
+  if (group?.equip && item.system?.equipped !== undefined) item.system.equipped = true;
+  if (group?.equip && item.type === "weapon" && item.system?.proficient !== undefined) {
+    item.system.proficient = true;
+  }
+  if (group?.ensureFeatureActivities && item.type === "feat") {
+    return ensureActivities(item);
+  }
+  return item;
+}
+
+function normalizeAiItemGroups(rawItems) {
+  const source = rawItems && typeof rawItems === "object" ? rawItems : {};
+  return {
+    weapons: normalizeStringArrayForActor(source.weapons, 4, 80),
+    armor: normalizeStringArrayForActor(source.armor, 3, 80),
+    equipment: normalizeStringArrayForActor(source.equipment, 8, 80),
+    consumables: normalizeStringArrayForActor(source.consumables, 6, 80),
+    loot: normalizeStringArrayForActor(source.loot, 8, 80),
+    spells: normalizeStringArrayForActor(source.spells, 12, 80),
+    features: normalizeStringArrayForActor(source.features, 10, 100)
+  };
+}
+
+function normalizeStringArrayForActor(value, maxItems = 6, maxLength = 80, fallback = []) {
+  const list = Array.isArray(value)
+    ? value
+    : String(value || "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  const clean = list
+    .map((part) => String(part || "").replace(/\s+/g, " ").trim().slice(0, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+  if (clean.length) return clean;
+  return Array.isArray(fallback) ? fallback.slice(0, maxItems) : [];
+}
+
+function normalizeAttackStyle(value) {
+  const style = String(value || "").trim().toLowerCase();
+  if (["melee", "ranged", "caster", "mixed"].includes(style)) return style;
+  return "mixed";
+}
+
+function normalizeTagListForActor(rawTags, attackStyle) {
+  const tags = normalizeStringArrayForActor(rawTags, 8, 24).map((tag) => tag.toLowerCase());
+  if (tags.length) return tags;
+  if (attackStyle === "caster") return ["caster", "knowledge"];
+  if (attackStyle === "ranged") return ["wilderness", "martial"];
+  if (attackStyle === "melee") return ["martial"];
+  return ["criminal", "social"];
+}
+
+function normalizeSkillIdsForActor(rawSkillIds) {
+  const allowed = new Set(Object.keys(CONFIG?.DND5E?.skills || {}));
+  const raw = normalizeStringArrayForActor(rawSkillIds, 10, 24).map((value) => value.toLowerCase());
+  if (!allowed.size) return raw;
+  return raw.filter((value) => allowed.has(value));
+}
+
+function normalizeAbilityScoresForActor(rawAbilities, tier) {
+  const source = rawAbilities && typeof rawAbilities === "object" ? rawAbilities : {};
+  const base = 9 + clampRange(tier, 1, 4, 1);
+  return {
+    str: clampRange(source.str, 6, 22, base + 1),
+    dex: clampRange(source.dex, 6, 22, base),
+    con: clampRange(source.con, 6, 22, base + 1),
+    int: clampRange(source.int, 6, 22, base),
+    wis: clampRange(source.wis, 6, 22, base),
+    cha: clampRange(source.cha, 6, 22, base)
+  };
+}
+
+function normalizeCurrencyForActor(rawCurrency) {
+  const source = rawCurrency && typeof rawCurrency === "object" ? rawCurrency : {};
+  return {
+    pp: clampRange(source.pp, 0, 5000, 0),
+    gp: clampRange(source.gp, 0, 50000, 0),
+    ep: clampRange(source.ep, 0, 5000, 0),
+    sp: clampRange(source.sp, 0, 50000, 0),
+    cp: clampRange(source.cp, 0, 50000, 0)
+  };
+}
+
+function normalizeCrForActor(value, tier) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 30) {
+    return Math.round(numeric * 1000) / 1000;
+  }
+  if (tier <= 1) return 0.25;
+  if (tier === 2) return 2;
+  if (tier === 3) return 5;
+  return 8;
+}
+
+function clampRange(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(numeric)));
+}
+
+function uniquePackNames(packs) {
+  return Array.from(new Set((packs || []).filter(Boolean)));
+}
+
+function buildLookupKeywordsFromName(name) {
+  const stopWords = new Set([
+    "of",
+    "the",
+    "and",
+    "a",
+    "an",
+    "with",
+    "for",
+    "to",
+    "in",
+    "на",
+    "и",
+    "с",
+    "для"
+  ]);
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9\s'-]/gi, " ")
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3 && !stopWords.has(part))
+    .slice(0, 5);
+}
+
+/**
  * Build biography HTML
  * @param {Object} npc - NPC data
  * @returns {string}
