@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.5.5
 - Add `Use AI` toggle that reveals AI controls and `Create AI NPC` (works for main and encounter flows).
 - Align dialog footer buttons so `Create AI NPC` matches other action buttons visually.
 - Switch full-AI NPC generation to strict JSON schema/field-order prompt and map new fields (`class`, `stats`, `items`, `actions`, `personality`, `description`).
