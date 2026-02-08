@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.5.6
 - Rework NPC generator dialog UI (cleaner layout, better contrast/readability, improved AI controls).
 - Fix option persistence so selected settings remain between dialog reopenings.
 - Improve manual ChatGPT import robustness (handles malformed JSON better and correctly imports multi-NPC encounter payloads).
