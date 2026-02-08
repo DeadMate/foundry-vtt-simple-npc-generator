@@ -63,6 +63,7 @@ export function generateNpc(options) {
     tier,
     archetype,
     culture,
+    gender,
     race,
     budget,
     includeLoot,
@@ -74,7 +75,7 @@ export function generateNpc(options) {
   const names = DATA_CACHE.names;
   const traits = DATA_CACHE.traits;
 
-  const name = buildUniqueName(names, culture, importantNpc, usedNames);
+  const name = buildUniqueName(names, culture, importantNpc, usedNames, gender);
 
   const appearance = pickRandomN(traits?.appearance || [], 2 + randInt(0, 2));
   const speech = pickRandomOr(traits?.speech, "Plainspoken");
@@ -109,6 +110,7 @@ export function generateNpc(options) {
     hp,
     speed,
     culture,
+    gender: normalizeGenderValue(gender),
     race,
     budget,
     abilities,
@@ -133,12 +135,15 @@ export function generateNpc(options) {
  * @param {string} culture - Culture name
  * @param {boolean} importantNpc - Whether NPC is a boss
  * @param {Set<string>} usedNames - Set of already used names
+ * @param {string} gender - Gender option (random/male/female)
  * @returns {string}
  */
-export function buildUniqueName(names, culture, importantNpc, usedNames) {
+export function buildUniqueName(names, culture, importantNpc, usedNames, gender = "random") {
   const tries = 12;
+  const genderValue = normalizeGenderValue(gender);
+  const namePool = getCultureNamePoolByGender(names, culture, genderValue);
   for (let i = 0; i < tries; i++) {
-    const firstName = pickRandomOr(names?.cultures?.[culture], "Nameless");
+    const firstName = pickRandomOr(namePool, "Nameless");
     const surname = chance(0.6) ? pickRandomOr(names?.surnames, "") : "";
     const title = importantNpc && chance(0.4) ? pickRandomOr(names?.titles, "") : "";
     const full = [title, firstName, surname].filter(Boolean).join(" ");
@@ -150,6 +155,51 @@ export function buildUniqueName(names, culture, importantNpc, usedNames) {
   const fallback = `Nameless ${randInt(1, 999)}`;
   if (usedNames) usedNames.add(fallback);
   return fallback;
+}
+
+function getCultureNamePoolByGender(names, culture, gender) {
+  const selectedCulture = String(culture || "").trim();
+  const cultureEntry = names?.cultures?.[selectedCulture];
+  if (!cultureEntry) return [];
+
+  if (Array.isArray(cultureEntry)) {
+    return cultureEntry;
+  }
+
+  if (cultureEntry && typeof cultureEntry === "object") {
+    const buckets = [];
+    if (gender === "male") {
+      buckets.push(cultureEntry.male, cultureEntry.m, cultureEntry.masculine);
+    } else if (gender === "female") {
+      buckets.push(cultureEntry.female, cultureEntry.f, cultureEntry.feminine);
+    } else {
+      buckets.push(
+        cultureEntry.random,
+        cultureEntry.any,
+        cultureEntry.all,
+        cultureEntry.male,
+        cultureEntry.female
+      );
+    }
+    const merged = buckets.flatMap((bucket) => (Array.isArray(bucket) ? bucket : []));
+    if (merged.length) return merged;
+  }
+
+  const maleByCulture = names?.culturesMale?.[selectedCulture];
+  const femaleByCulture = names?.culturesFemale?.[selectedCulture];
+  if (gender === "male" && Array.isArray(maleByCulture) && maleByCulture.length) return maleByCulture;
+  if (gender === "female" && Array.isArray(femaleByCulture) && femaleByCulture.length) return femaleByCulture;
+  if (Array.isArray(maleByCulture) && Array.isArray(femaleByCulture)) {
+    return [...maleByCulture, ...femaleByCulture];
+  }
+  return [];
+}
+
+function normalizeGenderValue(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["male", "m", "man"].includes(normalized)) return "male";
+  if (["female", "f", "woman"].includes(normalized)) return "female";
+  return "random";
 }
 
 /**
@@ -466,12 +516,23 @@ function normalizeAiBlueprintForActor(blueprint) {
   const attackStyle = normalizeAttackStyle(source.attackStyle);
   const skillIds = normalizeSkillIdsForActor(source.skillIds || source.skills);
   const tags = normalizeTagListForActor(source.archetypeTags || source.tags, attackStyle);
-  const className = String(source.className || getClassForArchetype({ tags }) || "Fighter").trim() || "Fighter";
+  const className = String(source.className || source.class || getClassForArchetype({ tags }) || "Fighter").trim() || "Fighter";
   const archetypeName =
     String(source.archetypeName || source.archetype?.name || `${className} Operative`).trim() ||
     `${className} Operative`;
 
-  const abilities = normalizeAbilityScoresForActor(source.abilities, tier);
+  const abilities = normalizeAbilityScoresForActor(source.abilities || source.stats, tier);
+  const aiItemSource = source.items && typeof source.items === "object" && !Array.isArray(source.items)
+    ? { ...source, ...source.items }
+    : source;
+  const personality = String(source.personality || "").trim();
+  const description = String(source.description || "").trim();
+  const appearanceRaw = normalizeStringArrayForActor(source.appearance, 4, 100, []);
+  const appearanceFromDescription = extractAppearanceFromDescriptionForActor(description);
+  const appearance = appearanceRaw.length
+    ? appearanceRaw
+    : normalizeStringArrayForActor(appearanceFromDescription, 4, 100, ["steady gaze", "travel-worn outfit"]);
+  const personalityLine = firstSentenceForActor(personality) || firstSentenceForActor(description);
 
   return {
     name: String(source.name || "Nameless").trim() || "Nameless",
@@ -491,19 +552,19 @@ function normalizeAiBlueprintForActor(blueprint) {
     prof: clampRange(source.prof, 2, 6, getProfBonus(tier)),
     ac: clampRange(source.ac, 10, 24, 12 + tier),
     hp: clampRange(source.hp, 4, 300, 10 + tier * 12),
-    speed: clampRange(source.speed, 20, 60, 30),
+    speed: parseSpeedFeetForActor(source.speed, 30),
     culture: String(source.culture || "").trim(),
     alignment: String(source.alignment || "").trim(),
     race: String(source.race || "Humanoid").trim() || "Humanoid",
     budget: String(source.budget || "normal").trim() || "normal",
     abilities,
     prime: getPrimeAbilities(abilities),
-    appearance: normalizeStringArrayForActor(source.appearance, 4, 100, ["steady gaze", "travel-worn outfit"]),
-    speech: String(source.speech || "Speaks with measured confidence.").trim(),
-    motivation: String(source.motivation || "Pursues a practical objective with urgency.").trim(),
+    appearance,
+    speech: String(source.speech || personalityLine || "Speaks with measured confidence.").trim(),
+    motivation: String(source.motivation || personalityLine || "Pursues a practical objective with urgency.").trim(),
     secret: source.secret ? String(source.secret).trim() : null,
     hook: source.hook ? String(source.hook).trim() : null,
-    quirk: String(source.quirk || "Keeps strict routines in tense moments.").trim(),
+    quirk: String(source.quirk || personalityLine || "Keeps strict routines in tense moments.").trim(),
     rumor: source.rumor ? String(source.rumor).trim() : null,
     mannerism: source.mannerism ? String(source.mannerism).trim() : null,
     currency: normalizeCurrencyForActor(source.currency),
@@ -512,7 +573,7 @@ function normalizeAiBlueprintForActor(blueprint) {
     includeHook: source.includeHook !== false,
     importantNpc: !!source.importantNpc,
     tokenImg: String(source.tokenImg || "").trim() || "",
-    aiItems: normalizeAiItemGroups(source.items || source.aiItems || source)
+    aiItems: normalizeAiItemGroups(source.aiItems || aiItemSource)
   };
 }
 
@@ -629,14 +690,35 @@ function prepareResolvedAiItem(itemDoc, group) {
 
 function normalizeAiItemGroups(rawItems) {
   const source = rawItems && typeof rawItems === "object" ? rawItems : {};
+  const flatItems = normalizeStringArrayForActor(source.items, 18, 80);
+  const groupedFlat = splitFlatItemNamesForActor(flatItems);
+  const featuresFromActions = normalizeStringArrayForActor(source.actions, 12, 100);
   return {
-    weapons: normalizeStringArrayForActor(source.weapons, 4, 80),
-    armor: normalizeStringArrayForActor(source.armor, 3, 80),
-    equipment: normalizeStringArrayForActor(source.equipment, 8, 80),
-    consumables: normalizeStringArrayForActor(source.consumables, 6, 80),
-    loot: normalizeStringArrayForActor(source.loot, 8, 80),
-    spells: normalizeStringArrayForActor(source.spells, 12, 80),
-    features: normalizeStringArrayForActor(source.features, 10, 100)
+    weapons: dedupeStringList([
+      ...normalizeStringArrayForActor(source.weapons, 6, 80),
+      ...groupedFlat.weapons
+    ], 6),
+    armor: dedupeStringList([
+      ...normalizeStringArrayForActor(source.armor, 4, 80),
+      ...groupedFlat.armor
+    ], 4),
+    equipment: dedupeStringList([
+      ...normalizeStringArrayForActor(source.equipment, 12, 80),
+      ...groupedFlat.equipment
+    ], 12),
+    consumables: dedupeStringList([
+      ...normalizeStringArrayForActor(source.consumables, 8, 80),
+      ...groupedFlat.consumables
+    ], 8),
+    loot: dedupeStringList([
+      ...normalizeStringArrayForActor(source.loot, 10, 80),
+      ...groupedFlat.loot
+    ], 10),
+    spells: dedupeStringList(normalizeStringArrayForActor(source.spells, 14, 80), 14),
+    features: dedupeStringList([
+      ...normalizeStringArrayForActor(source.features, 12, 100),
+      ...featuresFromActions
+    ], 14)
   };
 }
 
@@ -681,12 +763,12 @@ function normalizeAbilityScoresForActor(rawAbilities, tier) {
   const source = rawAbilities && typeof rawAbilities === "object" ? rawAbilities : {};
   const base = 9 + clampRange(tier, 1, 4, 1);
   return {
-    str: clampRange(source.str, 6, 22, base + 1),
-    dex: clampRange(source.dex, 6, 22, base),
-    con: clampRange(source.con, 6, 22, base + 1),
-    int: clampRange(source.int, 6, 22, base),
-    wis: clampRange(source.wis, 6, 22, base),
-    cha: clampRange(source.cha, 6, 22, base)
+    str: clampRange(source.str ?? source.STR, 6, 22, base + 1),
+    dex: clampRange(source.dex ?? source.DEX, 6, 22, base),
+    con: clampRange(source.con ?? source.CON, 6, 22, base + 1),
+    int: clampRange(source.int ?? source.INT, 6, 22, base),
+    wis: clampRange(source.wis ?? source.WIS, 6, 22, base),
+    cha: clampRange(source.cha ?? source.CHA, 6, 22, base)
   };
 }
 
@@ -710,6 +792,33 @@ function normalizeCrForActor(value, tier) {
   if (tier === 2) return 2;
   if (tier === 3) return 5;
   return 8;
+}
+
+function parseSpeedFeetForActor(rawSpeed, fallback = 30) {
+  if (typeof rawSpeed === "number") {
+    return clampRange(rawSpeed, 20, 60, fallback);
+  }
+  const text = String(rawSpeed || "").trim();
+  if (!text) return fallback;
+  const match = text.match(/(\d{2,3})/);
+  return match ? clampRange(Number(match[1]), 20, 60, fallback) : fallback;
+}
+
+function firstSentenceForActor(text) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  if (!value) return "";
+  const match = value.match(/^(.+?[.!?])(\s|$)/);
+  return (match ? match[1] : value).trim();
+}
+
+function extractAppearanceFromDescriptionForActor(text) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  if (!value) return [];
+  return value
+    .split(/[,.]| and /i)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 8)
+    .slice(0, 4);
 }
 
 function clampRange(value, min, max, fallback) {
@@ -745,6 +854,61 @@ function buildLookupKeywordsFromName(name) {
     .map((part) => part.trim())
     .filter((part) => part.length >= 3 && !stopWords.has(part))
     .slice(0, 5);
+}
+
+function splitFlatItemNamesForActor(itemNames) {
+  const result = {
+    weapons: [],
+    armor: [],
+    equipment: [],
+    consumables: [],
+    loot: []
+  };
+
+  for (const itemName of itemNames || []) {
+    const lower = String(itemName || "").toLowerCase();
+    if (!lower) continue;
+    if (/(sword|axe|mace|hammer|bow|crossbow|dagger|spear|halberd|staff|rapier|whip|javelin|flail)/i.test(lower)) {
+      result.weapons.push(itemName);
+      continue;
+    }
+    if (/(armor|mail|plate|shield|helm|gauntlet|breastplate|leather|chain)/i.test(lower)) {
+      result.armor.push(itemName);
+      continue;
+    }
+    if (/(potion|elixir|scroll|ammo|arrows|bolts|kit|healer|ration)/i.test(lower)) {
+      result.consumables.push(itemName);
+      continue;
+    }
+    if (/(gem|coin|ring|necklace|trinket|relic|idol|token)/i.test(lower)) {
+      result.loot.push(itemName);
+      continue;
+    }
+    result.equipment.push(itemName);
+  }
+
+  return {
+    weapons: dedupeStringList(result.weapons, 6),
+    armor: dedupeStringList(result.armor, 4),
+    equipment: dedupeStringList(result.equipment, 12),
+    consumables: dedupeStringList(result.consumables, 8),
+    loot: dedupeStringList(result.loot, 10)
+  };
+}
+
+function dedupeStringList(values, maxItems = 10) {
+  const out = [];
+  const seen = new Set();
+  for (const rawValue of values || []) {
+    const value = String(rawValue || "").replace(/\s+/g, " ").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= maxItems) break;
+  }
+  return out;
 }
 
 /**

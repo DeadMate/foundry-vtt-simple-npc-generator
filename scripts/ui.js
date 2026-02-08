@@ -20,10 +20,12 @@ import {
   buildEncounterPlan,
   ensureEncounterFolder
 } from "./encounter.js";
-import { generateNpc, buildActorData, buildActorDataFromAiBlueprint } from "./npc-generator.js";
+import { generateNpc, buildActorData, buildActorDataFromAiBlueprint, getClassForArchetype } from "./npc-generator.js";
 import {
   isOpenAiConfigured,
   getOpenAiMaxBatch,
+  buildManualEncounterNpcPrompt,
+  buildManualFullNpcPrompt,
   generateFullNpcWithOpenAi,
   generateNpcFlavorWithOpenAi,
   generateNpcTokenImageWithOpenAi,
@@ -314,183 +316,375 @@ export async function openNpcDialog() {
     const lastSpeciesKey = getLastSpeciesKey();
     const lastOptions = getLastNpcOptions();
     const aiReady = isOpenAiConfigured();
+    const speciesEntries = Array.isArray(DATA_CACHE.speciesEntries) ? DATA_CACHE.speciesEntries : [];
 
   const content = `
     <style>
       .npc-btn-form { display: flex; flex-direction: column; gap: 0.75rem; }
-      .npc-btn-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
-      .npc-btn-tabs button { flex: 1; }
+      .npc-btn-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        padding: 0.8rem;
+        border-radius: 14px;
+        color: #edf2ff;
+        background: linear-gradient(165deg, rgba(25, 31, 45, 0.98), rgba(14, 18, 29, 0.98));
+        border: 1px solid rgba(129, 156, 219, 0.45);
+      }
+      .npc-btn-shell,
+      .npc-btn-shell label,
+      .npc-btn-shell span,
+      .npc-btn-shell p,
+      .npc-btn-shell h3,
+      .npc-btn-shell strong,
+      .npc-btn-shell small { color: #edf2ff; }
+      .npc-btn-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        background: rgba(73, 104, 171, 0.18);
+        border: 1px solid rgba(125, 162, 236, 0.55);
+      }
+      .npc-btn-hero strong { font-size: 1rem; letter-spacing: 0.02em; color: #ffffff; }
+      .npc-btn-hero small { display: block; opacity: 0.95; margin-top: 0.1rem; color: #dbe7ff; }
+      .npc-btn-badge {
+        font-size: 0.73rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 700;
+        padding: 0.28rem 0.55rem;
+        border-radius: 999px;
+        color: #f7fbff;
+        background: rgba(78, 155, 255, 0.46);
+        border: 1px solid rgba(162, 208, 255, 0.95);
+      }
+      .npc-btn-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.4rem;
+      }
+      .npc-btn-tabs button {
+        border-radius: 10px;
+        margin: 0;
+        padding: 0.45rem 0.7rem;
+        font-weight: 600;
+        color: #e3ebff;
+        border: 1px solid #5f6e97;
+        background: linear-gradient(180deg, #2c3854, #212b42);
+      }
+      .npc-btn-tabs button.active {
+        color: #ffffff;
+        background: linear-gradient(180deg, #488ff0, #316cc2);
+        border-color: #a8cbff;
+      }
+      .npc-btn-shell button {
+        color: #f2f7ff;
+        border: 1px solid #60719d;
+        background: linear-gradient(180deg, #31405f, #27324d);
+        text-shadow: none;
+      }
+      .npc-btn-shell button:hover {
+        border-color: #92b8ff;
+        background: linear-gradient(180deg, #3a4d74, #2f4063);
+      }
+      .npc-btn-shell button:disabled {
+        opacity: 0.6;
+        color: #b5bfd8;
+      }
       .npc-btn-panel { display: flex; flex-direction: column; gap: 0.75rem; }
-      .npc-btn-panel .form-group { margin: 0; }
-      .npc-btn-panel .form-fields { gap: 0.5rem; }
-      .npc-btn-panel .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
-      .npc-btn-panel select, .npc-btn-panel input[type="text"], .npc-btn-panel input[type="number"] { width: 100%; }
-      .npc-btn-ai-controls { display: none; flex-direction: column; align-items: flex-start; gap: 0.35rem; }
-      .npc-btn-ai-group .form-fields { flex-direction: column; align-items: flex-start; }
+      .npc-btn-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.6rem;
+      }
+      .npc-btn-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.65rem;
+        border-radius: 10px;
+        border: 1px solid rgba(123, 149, 206, 0.5);
+        background: rgba(49, 64, 95, 0.32);
+      }
+      .npc-btn-card h3 {
+        margin: 0;
+        font-size: 0.82rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #d8e5ff;
+      }
+      .npc-btn-span-2 { grid-column: 1 / -1; }
+      .npc-btn-field { display: flex; flex-direction: column; gap: 0.25rem; }
+      .npc-btn-field > span { font-size: 0.78rem; opacity: 0.88; }
+      .npc-btn-row { display: flex; gap: 0.45rem; align-items: center; }
+      .npc-btn-row > * { flex: 1; }
+      .npc-btn-row .npc-btn-roll { flex: 0 0 auto; width: 2.2rem; padding: 0; }
+      .npc-btn-row .npc-btn-stepper { flex: 0 0 auto; width: 2rem; padding: 0; }
+      .npc-btn-field select,
+      .npc-btn-field input[type="text"],
+      .npc-btn-field input[type="number"] {
+        width: 100%;
+        color: #f3f7ff;
+        border-radius: 8px;
+        border: 1px solid #6073a5;
+        background: #11192b;
+      }
+      .npc-btn-field select option,
+      .npc-btn-field select optgroup {
+        color: #172033;
+        background: #f5f8ff;
+      }
+      .npc-btn-field select:focus,
+      .npc-btn-field input[type="text"]:focus,
+      .npc-btn-field input[type="number"]:focus {
+        outline: none;
+        border-color: #9fc1ff;
+        box-shadow: 0 0 0 1px rgba(160, 193, 255, 0.35);
+      }
+      .npc-btn-checks {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.35rem 0.6rem;
+      }
+      .npc-btn-note {
+        margin: 0;
+        font-size: 0.78rem;
+        line-height: 1.3;
+        color: #c9d8f6;
+      }
+      .npc-btn-shell .checkbox { color: #edf2ff; }
+      .npc-btn-ai-group { gap: 0.6rem; }
+      .npc-btn-ai-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .npc-btn-ai-top h3 { margin: 0; font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.04em; }
+      .npc-btn-ai-controls { display: none; flex-direction: column; align-items: stretch; gap: 0.5rem; }
+      .npc-btn-ai-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
+      .npc-btn-ai-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem 0.6rem; }
       .npc-btn-dialog-buttons { display: flex !important; gap: 0.4rem; }
-      .npc-btn-dialog-buttons .dialog-button { margin: 0; width: 100%; flex: 1 1 0; white-space: nowrap; }
+      .npc-btn-dialog-buttons .dialog-button {
+        margin: 0;
+        width: 100%;
+        flex: 1 1 0;
+        white-space: nowrap;
+        color: #ffffff;
+        border: 1px solid #7ca7f5;
+        background: linear-gradient(180deg, #3f76d6, #2f5fb5);
+      }
+      .npc-btn-dialog-buttons .dialog-button:hover {
+        border-color: #b4d0ff;
+        background: linear-gradient(180deg, #4a87ef, #386ecf);
+      }
+      @media (max-width: 700px) {
+        .npc-btn-grid,
+        .npc-btn-checks,
+        .npc-btn-ai-actions,
+        .npc-btn-ai-options { grid-template-columns: 1fr; }
+      }
     </style>
     <form class="npc-btn-form">
       <input type="hidden" name="encounterMode" value="main">
-      <div class="npc-btn-tabs">
-        <button type="button" data-tab="main" class="active">Main</button>
-        <button type="button" data-tab="encounter">Encounter</button>
-      </div>
-      <div data-tab-panel="main" class="npc-btn-panel">
-      <div class="form-group">
-        <label>Archetype</label>
-        <div class="form-fields">
-          <select name="archetype">
-            <option value="random">Random</option>
-            ${options}
-          </select>
-          <button type="button" data-action="roll-archetype" title="Pick a random archetype">🎲</button>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Difficulty (Tier)</label>
-        <div class="form-fields">
-          <select name="tier">
-            <option value="auto">Auto (party level)</option>
-            <option value="1">T1 (CR 1/8 - 1/2)</option>
-            <option value="2">T2 (CR 1 - 3)</option>
-            <option value="3">T3 (CR 4 - 6)</option>
-            <option value="4">T4 (CR 7 - 10)</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Budget</label>
-        <div class="form-fields">
-          <select name="budget">
-            <option value="poor">Poor</option>
-            <option value="normal" selected>Normal</option>
-            <option value="well">Well-Off</option>
-            <option value="elite">Elite</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Culture</label>
-        <div class="form-fields">
-          <select name="culture">
-            <option value="random">Random</option>
-            ${Object.keys(DATA_CACHE.names?.cultures || {})
-              .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(capitalize(k))}</option>`)
-              .join("")}
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Race</label>
-        <div class="form-fields" style="flex-direction: column; align-items: stretch;">
-          <input type="text" name="speciesSearch" placeholder="Search race..." />
-          <select name="species">
-            <option value="random">Random</option>
-            ${speciesOptions}
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Count</label>
-        <div class="form-fields" style="gap: 0.5rem; align-items: center;">
-          <button type="button" data-npc-count="minus">-</button>
-          <input type="number" name="count" value="1" min="1" max="50" style="width: 5rem; text-align: center;">
-          <button type="button" data-npc-count="plus">+</button>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Folder</label>
-        <div class="form-fields">
-          <select name="folder">
-            <option value="">None</option>
-            ${folderOptions}
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Options</label>
-        <div class="form-fields" style="flex-direction: column; align-items: flex-start;">
-          <label class="checkbox"><input type="checkbox" name="includeLoot" checked> Loot</label>
-          <label class="checkbox"><input type="checkbox" name="includeSecret" checked> Secret</label>
-          <label class="checkbox"><input type="checkbox" name="includeHook" checked> Quest hook</label>
-          <label class="checkbox"><input type="checkbox" name="importantNpc"> Boss</label>
-        </div>
-      </div>
-      </div>
-      <div data-tab-panel="encounter" class="npc-btn-panel" style="display: none;">
-      <div class="form-group">
-        <label>Encounter</label>
-        <div class="form-fields" style="flex-direction: column; align-items: stretch;">
-          <label style="display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.25rem;">
-            <span style="font-size: 0.85rem;">Encounter race</span>
-            <input type="text" name="encounterSpeciesSearch" placeholder="Search race..." />
-            <select name="encounterSpecies">
-              <option value="random">Random</option>
-              ${speciesOptions}
-            </select>
-          </label>
-          <label style="display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.25rem;">
-            <span style="font-size: 0.85rem;">Encounter archetype</span>
-            <select name="encounterArchetype">
-              <option value="random">Random</option>
-              ${options}
-            </select>
-          </label>
-          <div class="row-2">
-            <label style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <span style="font-size: 0.85rem;">Party level</span>
-              <input type="number" name="partyLevel" value="3" min="1" max="20">
-            </label>
-            <label style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <span style="font-size: 0.85rem;">Party size</span>
-              <input type="number" name="partySize" value="4" min="1" max="8">
-            </label>
+      <div class="npc-btn-shell">
+        <div class="npc-btn-hero">
+          <div>
+            <strong>NPC Generator</strong>
+            <small>Fast setup for single NPCs and full encounters.</small>
           </div>
-          <label style="display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.25rem;">
-            <span style="font-size: 0.85rem;">Difficulty</span>
-            <select name="encounterDifficulty">
-              <option value="easy">Easy</option>
-              <option value="medium" selected>Medium</option>
-              <option value="hard">Hard</option>
-              <option value="deadly">Deadly</option>
-            </select>
-          </label>
+          <span class="npc-btn-badge">D&D 5e</span>
         </div>
-      </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <div class="form-fields">
-          <p style="margin: 0; font-size: 0.85rem; opacity: 0.8;">
-            Auto-balance adjusts NPC tiers and count, and will place them in the next "Encounter-N" folder.
-          </p>
+
+        <div class="npc-btn-tabs">
+          <button type="button" data-tab="main" class="active">Main NPC</button>
+          <button type="button" data-tab="encounter">Encounter</button>
         </div>
-      </div>
-      </div>
-      <div class="form-group npc-btn-ai-group">
-        <label>AI</label>
-        <div class="form-fields">
-          <label class="checkbox"><input type="checkbox" name="useAi"> Use AI (OpenAI)</label>
+
+        <div data-tab-panel="main" class="npc-btn-panel">
+          <div class="npc-btn-grid">
+            <section class="npc-btn-card">
+              <h3>Core Setup</h3>
+              <label class="npc-btn-field">
+                <span>Archetype</span>
+                <div class="npc-btn-row">
+                  <select name="archetype">
+                    <option value="random">Random</option>
+                    ${options}
+                  </select>
+                  <button type="button" class="npc-btn-roll" data-action="roll-archetype" title="Pick a random archetype">🎲</button>
+                </div>
+              </label>
+              <label class="npc-btn-field">
+                <span>Difficulty (Tier)</span>
+                <select name="tier">
+                  <option value="auto">Auto (party level)</option>
+                  <option value="1">T1 (CR 1/8 - 1/2)</option>
+                  <option value="2">T2 (CR 1 - 3)</option>
+                  <option value="3">T3 (CR 4 - 6)</option>
+                  <option value="4">T4 (CR 7 - 10)</option>
+                </select>
+              </label>
+              <label class="npc-btn-field">
+                <span>Budget</span>
+                <select name="budget">
+                  <option value="poor">Poor</option>
+                  <option value="normal" selected>Normal</option>
+                  <option value="well">Well-Off</option>
+                  <option value="elite">Elite</option>
+                </select>
+              </label>
+            </section>
+
+            <section class="npc-btn-card">
+              <h3>Identity</h3>
+              <label class="npc-btn-field">
+                <span>Culture</span>
+                <select name="culture">
+                  <option value="random">Random</option>
+                  ${Object.keys(DATA_CACHE.names?.cultures || {})
+                    .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(capitalize(k))}</option>`)
+                    .join("")}
+                </select>
+              </label>
+              <label class="npc-btn-field">
+                <span>Gender</span>
+                <select name="gender">
+                  <option value="random">Random</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </label>
+              <label class="npc-btn-field">
+                <span>Race</span>
+                <input type="text" name="speciesSearch" placeholder="Search race..." />
+                <select name="species">
+                  <option value="random">Random</option>
+                  ${speciesOptions}
+                </select>
+              </label>
+            </section>
+
+            <section class="npc-btn-card">
+              <h3>Output</h3>
+              <label class="npc-btn-field">
+                <span>Count</span>
+                <div class="npc-btn-row">
+                  <button type="button" class="npc-btn-stepper" data-npc-count="minus">-</button>
+                  <input type="number" name="count" value="1" min="1" max="50" style="text-align: center;">
+                  <button type="button" class="npc-btn-stepper" data-npc-count="plus">+</button>
+                </div>
+              </label>
+              <label class="npc-btn-field">
+                <span>Folder</span>
+                <select name="folder">
+                  <option value="">None</option>
+                  ${folderOptions}
+                </select>
+              </label>
+            </section>
+
+            <section class="npc-btn-card">
+              <h3>Add-ons</h3>
+              <div class="npc-btn-checks">
+                <label class="checkbox"><input type="checkbox" name="includeLoot" checked> Loot</label>
+                <label class="checkbox"><input type="checkbox" name="includeSecret" checked> Secret</label>
+                <label class="checkbox"><input type="checkbox" name="includeHook" checked> Quest hook</label>
+                <label class="checkbox"><input type="checkbox" name="importantNpc"> Boss</label>
+              </div>
+              <p class="npc-btn-note">Use Boss for stronger stat budget and encounter presence.</p>
+            </section>
+          </div>
+        </div>
+
+        <div data-tab-panel="encounter" class="npc-btn-panel" style="display: none;">
+          <div class="npc-btn-grid">
+            <section class="npc-btn-card">
+              <h3>Encounter Template</h3>
+              <label class="npc-btn-field">
+                <span>Encounter race</span>
+                <input type="text" name="encounterSpeciesSearch" placeholder="Search race..." />
+                <select name="encounterSpecies">
+                  <option value="random">Random</option>
+                  ${speciesOptions}
+                </select>
+              </label>
+              <label class="npc-btn-field">
+                <span>Encounter archetype</span>
+                <select name="encounterArchetype">
+                  <option value="random">Random</option>
+                  ${options}
+                </select>
+              </label>
+            </section>
+
+            <section class="npc-btn-card">
+              <h3>Party Balance</h3>
+              <div class="npc-btn-row">
+                <label class="npc-btn-field">
+                  <span>Party level</span>
+                  <input type="number" name="partyLevel" value="3" min="1" max="20">
+                </label>
+                <label class="npc-btn-field">
+                  <span>Party size</span>
+                  <input type="number" name="partySize" value="4" min="1" max="8">
+                </label>
+              </div>
+              <label class="npc-btn-field">
+                <span>Difficulty</span>
+                <select name="encounterDifficulty">
+                  <option value="easy">Easy</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="hard">Hard</option>
+                  <option value="deadly">Deadly</option>
+                </select>
+              </label>
+              <p class="npc-btn-note">Count auto-adjusts from party setup and difficulty.</p>
+            </section>
+
+            <section class="npc-btn-card npc-btn-span-2">
+              <h3>Encounter Notes</h3>
+              <p class="npc-btn-note">
+                Encounter generation places actors in the next <strong>Encounter-N</strong> folder and balances tiers automatically.
+              </p>
+            </section>
+          </div>
+        </div>
+
+        <section class="npc-btn-card npc-btn-ai-group">
+          <div class="npc-btn-ai-top">
+            <h3>AI Tools</h3>
+            <label class="checkbox"><input type="checkbox" name="useAi"> Use AI (OpenAI)</label>
+          </div>
           <div class="npc-btn-ai-controls" data-ai-controls>
-            <button type="button" data-action="open-ai-key">Set OpenAI API Key</button>
-            <label class="checkbox">
-              <input type="checkbox" name="includeAiFlavor" ${aiReady ? "" : "disabled"}>
-              AI flavor (OpenAI)
-            </label>
-            <label class="checkbox">
-              <input type="checkbox" name="includeAiToken" ${aiReady ? "" : "disabled"}>
-              AI token from description (OpenAI)
-            </label>
-            <span style="font-size: 0.8rem; opacity: 0.85;">
+            <div class="npc-btn-ai-actions">
+              <button type="button" data-action="open-ai-key">Set API Key</button>
+              <button type="button" data-action="copy-ai-prompt">Copy Prompt</button>
+              <button type="button" data-action="import-ai-json">Import JSON</button>
+            </div>
+            <div class="npc-btn-ai-options">
+              <label class="checkbox">
+                <input type="checkbox" name="includeAiFlavor" ${aiReady ? "" : "disabled"}>
+                AI flavor text
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="includeAiToken" ${aiReady ? "" : "disabled"}>
+                AI token image
+              </label>
+            </div>
+            <p class="npc-btn-note">
               ${aiReady
-                ? "Uses your GM OpenAI key from Module Settings."
+                ? "OpenAI key is configured for this GM client."
                 : "Set your OpenAI API key in Module Settings (Set API Key menu)."}
-            </span>
-            <span style="font-size: 0.8rem; opacity: 0.85;">
-              Button <strong>Create AI NPC</strong> builds full AI NPC (stats + gear + spells via compendium lookup).
-            </span>
+            </p>
+            <p class="npc-btn-note">
+              <strong>Create AI NPC</strong> builds full NPCs (stats + gear + spells/features via compendium lookup).
+            </p>
           </div>
-        </div>
+        </section>
       </div>
     </form>
   `;
@@ -543,15 +737,6 @@ export async function openNpcDialog() {
           createAiButton.text("Create AI NPC");
         }
       };
-      tabButtons.on("click", (ev) => {
-        const tab = ev.currentTarget.getAttribute("data-tab");
-        tabButtons.removeClass("active");
-        $(ev.currentTarget).addClass("active");
-        tabPanels.hide();
-        form.find(`[data-tab-panel='${tab}']`).show();
-        encounterModeInput.val(tab);
-        updateCreateLabel();
-      });
       if (lastFolder) {
         form.find("select[name='folder']").val(lastFolder);
       }
@@ -562,6 +747,7 @@ export async function openNpcDialog() {
         if (lastOptions.tier) form.find("select[name='tier']").val(String(lastOptions.tier));
         if (lastOptions.budget) form.find("select[name='budget']").val(String(lastOptions.budget));
         if (lastOptions.culture) form.find("select[name='culture']").val(String(lastOptions.culture));
+        if (lastOptions.gender) form.find("select[name='gender']").val(String(lastOptions.gender));
         if (lastOptions.archetype) form.find("select[name='archetype']").val(String(lastOptions.archetype));
         if (lastOptions.encounterSpecies) {
           form.find("select[name='encounterSpecies']").val(String(lastOptions.encounterSpecies));
@@ -571,19 +757,9 @@ export async function openNpcDialog() {
         }
         if (lastOptions.partyLevel) form.find("input[name='partyLevel']").val(Number(lastOptions.partyLevel));
         if (lastOptions.partySize) form.find("input[name='partySize']").val(Number(lastOptions.partySize));
+        if (lastOptions.count) form.find("input[name='count']").val(Number(lastOptions.count));
         if (lastOptions.encounterDifficulty) {
           form.find("select[name='encounterDifficulty']").val(String(lastOptions.encounterDifficulty));
-        }
-        if (lastOptions.encounterMode) {
-          const tab = String(lastOptions.encounterMode);
-          if (tab === "encounter") {
-            tabButtons.removeClass("active");
-            tabButtons.filter("[data-tab='encounter']").addClass("active");
-            tabPanels.hide();
-            form.find("[data-tab-panel='encounter']").show();
-            encounterModeInput.val("encounter");
-            updateCreateLabel();
-          }
         }
         if (typeof lastOptions.includeLoot === "boolean") {
           form.find("input[name='includeLoot']").prop("checked", lastOptions.includeLoot);
@@ -624,12 +800,90 @@ export async function openNpcDialog() {
       const aiControls = form.find("[data-ai-controls]");
       const includeAiFlavorInput = form.find("input[name='includeAiFlavor']");
       const includeAiTokenInput = form.find("input[name='includeAiToken']");
+      const readChecked = (name) => !!form.find(`input[name='${name}']`).prop("checked");
+      const collectDialogOptions = () => ({
+        tier: String(form.find("select[name='tier']").val() || "auto"),
+        budget: String(form.find("select[name='budget']").val() || "normal"),
+        culture: String(form.find("select[name='culture']").val() || "random"),
+        gender: String(form.find("select[name='gender']").val() || "random"),
+        archetype: String(form.find("select[name='archetype']").val() || "random"),
+        encounterSpecies: String(form.find("select[name='encounterSpecies']").val() || "random"),
+        encounterArchetype: String(form.find("select[name='encounterArchetype']").val() || "random"),
+        count: Math.max(1, Math.min(50, Number(form.find("input[name='count']").val()) || 1)),
+        partyLevel: Math.max(1, Math.min(20, Number(form.find("input[name='partyLevel']").val()) || 3)),
+        partySize: Math.max(1, Math.min(8, Number(form.find("input[name='partySize']").val()) || 4)),
+        encounterDifficulty: String(form.find("select[name='encounterDifficulty']").val() || "medium"),
+        encounterMode: String(encounterModeInput.val() || "main"),
+        useAi: !!useAiToggle.prop("checked"),
+        includeLoot: readChecked("includeLoot"),
+        includeSecret: readChecked("includeSecret"),
+        includeHook: readChecked("includeHook"),
+        includeAiFlavor: !!includeAiFlavorInput.prop("checked"),
+        includeAiToken: !!includeAiTokenInput.prop("checked"),
+        importantNpc: readChecked("importantNpc")
+      });
+      const persistDialogOptions = () => {
+        setLastNpcOptions(collectDialogOptions());
+        setLastFolderId(String(form.find("select[name='folder']").val() || ""));
+        const selectedSpecies = String(speciesSelect.val() || "random");
+        setLastSpeciesKey(selectedSpecies !== "random" ? selectedSpecies : "");
+      };
+      tabButtons.on("click", (ev) => {
+        const tab = ev.currentTarget.getAttribute("data-tab");
+        tabButtons.removeClass("active");
+        $(ev.currentTarget).addClass("active");
+        tabPanels.hide();
+        form.find(`[data-tab-panel='${tab}']`).show();
+        encounterModeInput.val(tab);
+        if (tab === "encounter") refreshEncounterCount();
+        updateCreateLabel();
+        persistDialogOptions();
+      });
       form.find("[data-action='open-ai-key']").on("click", () => {
         openOpenAiApiKeyDialog();
       });
+      form.find("[data-action='copy-ai-prompt']").on("click", async () => {
+        const promptContext = collectManualPromptContext({
+          form,
+          encounterModeInput,
+          archetypes,
+          speciesEntries
+        });
+        const promptText =
+          promptContext.encounterMode === "encounter"
+            ? buildManualEncounterNpcPrompt(promptContext)
+            : buildManualFullNpcPrompt(promptContext);
+        const copied = await copyTextToClipboard(promptText);
+        if (copied) {
+          ui.notifications?.info("NPC Button: ChatGPT prompt copied to clipboard.");
+          return;
+        }
+        new Dialog({
+          title: "ChatGPT NPC Prompt",
+          content: `
+            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+              <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+                Copy this prompt and use it in ChatGPT. Ask for JSON-only reply.
+              </p>
+              <textarea style="width:100%;min-height:18rem;" readonly>${escapeHtml(promptText)}</textarea>
+            </div>
+          `,
+          buttons: {
+            close: { label: "Close" }
+          },
+          default: "close"
+        }).render(true);
+      });
+      form.find("[data-action='import-ai-json']").on("click", () => {
+        openImportAiNpcDialog({
+          form,
+          encounterModeInput,
+          speciesEntries
+        });
+      });
       const updateAiUi = () => {
         const useAi = !!useAiToggle.prop("checked");
-        aiControls.toggle(useAi);
+        aiControls.css("display", useAi ? "flex" : "none");
         createAiButton.toggle(useAi);
         if (!useAi) {
           createAiButton.prop("disabled", false);
@@ -648,12 +902,18 @@ export async function openNpcDialog() {
         includeAiFlavorInput.prop("disabled", true);
         includeAiTokenInput.prop("disabled", true);
       }
-      useAiToggle.on("change", updateAiUi);
+      useAiToggle.on("change", () => {
+        updateAiUi();
+        persistDialogOptions();
+      });
+      includeAiFlavorInput.on("change", persistDialogOptions);
+      includeAiTokenInput.on("change", persistDialogOptions);
       form.find("[data-action='roll-archetype']").on("click", () => {
         const opts = archetypeSelect.find("option").toArray().filter((o) => o.value !== "random");
         if (!opts.length) return;
         const pick = pickRandom(opts);
         if (pick) archetypeSelect.val(pick.value);
+        persistDialogOptions();
       });
       attachSpeciesSearch(speciesSearch, speciesSelect, allOptions);
       attachSpeciesSearch(encounterSpeciesSearch, encounterSpeciesSelect, encounterAllOptions);
@@ -661,10 +921,35 @@ export async function openNpcDialog() {
       const clamp = (val) => Math.max(1, Math.min(50, Number(val) || 1));
       form.find("[data-npc-count='minus']").on("click", () => {
         input.val(clamp(Number(input.val()) - 1));
+        persistDialogOptions();
       });
       form.find("[data-npc-count='plus']").on("click", () => {
         input.val(clamp(Number(input.val()) + 1));
+        persistDialogOptions();
       });
+      form.on(
+        "change input",
+        [
+          "select[name='tier']",
+          "select[name='budget']",
+          "select[name='culture']",
+          "select[name='gender']",
+          "select[name='archetype']",
+          "select[name='species']",
+          "select[name='encounterSpecies']",
+          "select[name='encounterArchetype']",
+          "select[name='encounterDifficulty']",
+          "select[name='folder']",
+          "input[name='partyLevel']",
+          "input[name='partySize']",
+          "input[name='count']",
+          "input[name='includeLoot']",
+          "input[name='includeSecret']",
+          "input[name='includeHook']",
+          "input[name='importantNpc']"
+        ].join(", "),
+        persistDialogOptions
+      );
 
       const partyLevel = form.find("input[name='partyLevel']");
       const partySize = form.find("input[name='partySize']");
@@ -684,6 +969,7 @@ export async function openNpcDialog() {
       refreshEncounterCount();
       updateCreateLabel();
       updateAiUi();
+      persistDialogOptions();
     }
     }).render(true);
   } catch (err) {
@@ -712,6 +998,7 @@ export async function createNpcFromForm(formData, options = {}) {
     const tierInput = formData.get("tier");
     const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
     const cultureInput = formData.get("culture");
+    const genderInput = normalizeGenderOption(formData.get("gender"));
     const archetypeInput = formData.get("archetype");
     const folderInput = String(formData.get("folder") || "").trim() || null;
     let folderId = folderInput;
@@ -725,7 +1012,9 @@ export async function createNpcFromForm(formData, options = {}) {
       tier: String(tierInput || "auto"),
       budget: String(formData.get("budget") || "normal"),
       culture: String(cultureInput || "random"),
+      gender: genderInput,
       archetype: String(archetypeInput || "random"),
+      count: Math.max(1, Math.min(50, Number(formData.get("count")) || 1)),
       encounterSpecies: encounterSpeciesKey,
       encounterArchetype: encounterArchetypeKey,
       partyLevel: partyLevelInput,
@@ -839,6 +1128,7 @@ export async function createNpcFromForm(formData, options = {}) {
         cultureInput === "random"
           ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
           : cultureInput;
+      const gender = genderInput === "random" ? pickRandom(["male", "female"]) : genderInput;
 
       const speciesEntry =
         (encounterMode === "encounter" ? fixedEncounterSpecies : fixedSpecies) ||
@@ -852,6 +1142,7 @@ export async function createNpcFromForm(formData, options = {}) {
         tier: plannedTier,
         archetype: resolvedArchetype,
         culture,
+        gender,
         race: speciesName,
         budget: budgetInput,
         includeLoot,
@@ -876,6 +1167,7 @@ export async function createNpcFromForm(formData, options = {}) {
         const aiGenerated = await generateFullNpcWithOpenAi({
           tier: plannedTier,
           culture,
+          gender,
           race: speciesName,
           budget: budgetInput,
           includeLoot,
@@ -1175,4 +1467,583 @@ function normalizeRaceNameForMatch(value) {
     .toLowerCase()
     .replace(/[^a-zа-яё0-9]/gi, "")
     .trim();
+}
+
+function collectManualPromptContext({ form, encounterModeInput, archetypes, speciesEntries }) {
+  const mode = String(encounterModeInput?.val() || "main");
+  const partyLevel = Math.max(1, Math.min(20, Number(form.find("input[name='partyLevel']").val()) || 3));
+  const partySize = Math.max(1, Math.min(8, Number(form.find("input[name='partySize']").val()) || 4));
+  const encounterDifficulty = String(form.find("select[name='encounterDifficulty']").val() || "medium");
+  const count =
+    mode === "encounter"
+      ? buildEncounterCount({ partyLevel, partySize, difficulty: encounterDifficulty })
+      : Math.max(1, Math.min(50, Number(form.find("input[name='count']").val()) || 1));
+  const tierInput = String(form.find("select[name='tier']").val() || "auto");
+  const tier = tierInput === "auto" ? getAutoTier() : Math.max(1, Math.min(4, Number(tierInput) || 1));
+  const budget = String(form.find("select[name='budget']").val() || "normal");
+  const cultureRaw = String(form.find("select[name='culture']").val() || "random");
+  const culture = cultureRaw === "random" ? "" : cultureRaw;
+  const gender = normalizeGenderOption(form.find("select[name='gender']").val());
+  const includeSecret = !!form.find("input[name='includeSecret']").prop("checked");
+  const includeHook = !!form.find("input[name='includeHook']").prop("checked");
+  const includeLoot = !!form.find("input[name='includeLoot']").prop("checked");
+  const importantNpc = !!form.find("input[name='importantNpc']").prop("checked");
+
+  const archetypeKey =
+    mode === "encounter"
+      ? String(form.find("select[name='encounterArchetype']").val() || "random")
+      : String(form.find("select[name='archetype']").val() || "random");
+  const resolvedArchetype =
+    archetypeKey !== "random" ? (archetypes || []).find((entry) => entry.id === archetypeKey) || null : null;
+
+  const speciesKey =
+    mode === "encounter"
+      ? String(form.find("select[name='encounterSpecies']").val() || "random")
+      : String(form.find("select[name='species']").val() || "random");
+  const resolvedSpecies =
+    speciesKey !== "random"
+      ? (speciesEntries || []).find((entry) => entry.key === speciesKey) || null
+      : null;
+
+  return {
+    tier,
+    count,
+    encounterMode: mode,
+    partyLevel,
+    partySize,
+    culture,
+    gender,
+    race: resolvedSpecies?.name || "",
+    budget,
+    includeSecret,
+    includeHook,
+    includeLoot,
+    importantNpc,
+    encounterDifficulty,
+    archetypeName: resolvedArchetype?.name || "",
+    attackStyle: resolvedArchetype?.attackStyle || "",
+    archetypeTags: Array.isArray(resolvedArchetype?.tags) ? resolvedArchetype.tags : [],
+    className: resolvedArchetype ? getClassForArchetype(resolvedArchetype) : ""
+  };
+}
+
+function normalizeGenderOption(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["male", "m", "man"].includes(normalized)) return "male";
+  if (["female", "f", "woman"].includes(normalized)) return "female";
+  return "random";
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text || "");
+  if (!value) return false;
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // fallback below
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return !!copied;
+  } catch {
+    return false;
+  }
+}
+
+function openImportAiNpcDialog({ form, encounterModeInput, speciesEntries }) {
+  new Dialog({
+    title: "Import ChatGPT NPC JSON",
+    content: `
+      <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+          Paste JSON from ChatGPT (single NPC object or array of NPC objects). Import uses current dialog options for folder/encounter and toggles.
+        </p>
+        <textarea name="aiNpcJson" style="width:100%;min-height:18rem;" placeholder='{"name":"..."} or [{"name":"..."}, {...}]'></textarea>
+      </div>
+    `,
+    buttons: {
+      import: {
+        label: "Import NPC",
+        callback: async (html) => {
+          const rawJson = String(html.find("textarea[name='aiNpcJson']").val() || "").trim();
+          if (!rawJson) {
+            ui.notifications?.warn("NPC Button: Paste NPC JSON first.");
+            return;
+          }
+          try {
+            await importNpcFromChatGptJson(rawJson, { form, encounterModeInput, speciesEntries });
+          } catch (err) {
+            console.error("NPC Button: Failed to import ChatGPT NPC JSON.", err);
+            const reason = String(err?.message || "").trim();
+            ui.notifications?.error(
+              reason
+                ? `NPC Button: Import failed — ${reason}`
+                : "NPC Button: Import failed. JSON invalid or incompatible."
+            );
+          }
+        }
+      },
+      cancel: { label: "Cancel" }
+    },
+    default: "import"
+  }).render(true);
+}
+
+async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, speciesEntries }) {
+  await loadData();
+  const parsed = parseLooseJsonObject(rawJson);
+  const blueprints = normalizeImportedBlueprints(parsed);
+  if (!blueprints.length) {
+    throw new Error("Imported JSON is empty.");
+  }
+  if (!blueprints.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry))) {
+    throw new Error("Imported JSON must be an object or an array of objects.");
+  }
+
+  const formEl = form?.[0];
+  if (!formEl) {
+    throw new Error("Form context is unavailable.");
+  }
+  const formData = new FormData(formEl);
+  const encounterMode = String(formData.get("encounterMode") || String(encounterModeInput?.val() || "main"));
+
+  const tierInput = String(formData.get("tier") || "auto");
+  const tier = tierInput === "auto" ? getAutoTier() : Math.max(1, Math.min(4, Number(tierInput) || 1));
+  const budgetInput = String(formData.get("budget") || "normal");
+  const includeLoot = formData.get("includeLoot") === "on";
+  const includeSecret = formData.get("includeSecret") === "on";
+  const includeHook = formData.get("includeHook") === "on";
+  const importantNpc = formData.get("importantNpc") === "on";
+
+  let folderId = String(formData.get("folder") || "").trim() || null;
+  if (encounterMode === "encounter") {
+    folderId = await ensureEncounterFolder();
+  }
+  setLastFolderId(folderId);
+
+  const speciesList = Array.isArray(speciesEntries) && speciesEntries.length
+    ? speciesEntries
+    : Array.isArray(DATA_CACHE.speciesEntries)
+      ? DATA_CACHE.speciesEntries
+      : await getSpeciesEntries();
+  const speciesKey =
+    encounterMode === "encounter"
+      ? String(formData.get("encounterSpecies") || "random")
+      : String(formData.get("species") || "random");
+  const selectedSpecies = speciesKey !== "random"
+    ? speciesList.find((entry) => entry.key === speciesKey) || null
+    : null;
+
+  const buildResults = [];
+  for (const source of blueprints) {
+    const parsedBlueprint = { ...source };
+    parsedBlueprint.tier = Number(parsedBlueprint.tier || 0) > 0 ? parsedBlueprint.tier : tier;
+    parsedBlueprint.budget = String(parsedBlueprint.budget || "").trim() || budgetInput;
+    parsedBlueprint.includeLoot = includeLoot;
+    parsedBlueprint.includeSecret = includeSecret;
+    parsedBlueprint.includeHook = includeHook;
+    parsedBlueprint.importantNpc = importantNpc;
+    applyImportedBlueprintDefaults(parsedBlueprint);
+    if (!parsedBlueprint.className && parsedBlueprint.class) {
+      parsedBlueprint.className = String(parsedBlueprint.class || "").trim();
+    }
+    if (!parsedBlueprint.race && selectedSpecies?.name) {
+      parsedBlueprint.race = selectedSpecies.name;
+    }
+
+    const result = await buildActorDataFromAiBlueprint(parsedBlueprint, folderId);
+    if (!result?.actorData) {
+      throw new Error("Failed to build actor data from imported JSON.");
+    }
+    buildResults.push({
+      actorData: result.actorData,
+      speciesEntry: findSpeciesEntryByRace(speciesList, parsedBlueprint.race) || selectedSpecies || null,
+      resolvedItems: Number(result.resolvedItems || 0),
+      missingItems: Number(result.missingItems || 0)
+    });
+  }
+
+  if (!buildResults.length) {
+    throw new Error("No NPC entries were parsed from imported JSON.");
+  }
+
+  const created = typeof Actor.createDocuments === "function"
+    ? await Actor.createDocuments(buildResults.map((entry) => entry.actorData))
+    : await Promise.all(buildResults.map((entry) => Actor.create(entry.actorData)));
+
+  const pairs = buildResults.map((entry, index) => ({
+    actor: created?.[index],
+    speciesEntry: entry.speciesEntry
+  }));
+  for (const pair of pairs) {
+    const actor = pair.actor;
+    const speciesEntry = pair.speciesEntry;
+    if (!actor || !speciesEntry) continue;
+    try {
+      const speciesItem = await buildSpeciesItem(speciesEntry);
+      if (!speciesItem) continue;
+      const createdItems = await actor.createEmbeddedDocuments("Item", [speciesItem]);
+      const createdItem = createdItems?.[0] || null;
+      if (!createdItem) continue;
+      await actor.update({ "system.details.race": createdItem.id });
+      await applySpeciesTraitsToActor(actor, createdItem);
+      await applySpeciesAdvancements(actor, createdItem);
+    } catch (err) {
+      console.warn(`NPC Button: Failed to apply imported species for "${actor?.name || "Unknown"}".`, err);
+    }
+  }
+
+  const resolved = buildResults.reduce((sum, entry) => sum + entry.resolvedItems, 0);
+  const missing = buildResults.reduce((sum, entry) => sum + entry.missingItems, 0);
+  if ((created || []).length === 1) {
+    const actor = created?.[0];
+    if (resolved || missing) {
+      ui.notifications?.info(
+        `Imported NPC: ${actor?.name || "Unnamed"} (compendium matches: ${resolved}, missing: ${missing}).`
+      );
+      return;
+    }
+    ui.notifications?.info(`Imported NPC: ${actor?.name || "Unnamed"}`);
+    return;
+  }
+
+  const count = (created || []).length;
+  if (resolved || missing) {
+    ui.notifications?.info(
+      `Imported ${count} NPCs (compendium matches: ${resolved}, missing: ${missing}).`
+    );
+    return;
+  }
+  ui.notifications?.info(`Imported ${count} NPCs.`);
+}
+
+function normalizeImportedBlueprints(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+
+  const containerKeys = ["npcs", "encounter", "actors", "items", "data", "results"];
+  for (const key of containerKeys) {
+    if (!Array.isArray(parsed[key])) continue;
+    const list = parsed[key].filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+    if (list.length) return list;
+  }
+
+  return [parsed];
+}
+
+function parseLooseJsonObject(rawText) {
+  const text = normalizeImportJsonText(rawText);
+  if (!text) throw new Error("Empty JSON input.");
+  try {
+    return JSON.parse(text);
+  } catch {
+    const candidate = extractLikelyJsonBlock(text);
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      const repaired = repairCommonImportJsonIssues(candidate);
+      try {
+        return JSON.parse(repaired);
+      } catch (parseErr) {
+        const fallbackArray = parseQuotedArrayFallback(repaired);
+        if (fallbackArray?.length) {
+          return fallbackArray;
+        }
+        const fallbackParsed = parseQuotedKeyValueFallback(repaired);
+        if (fallbackParsed && Object.keys(fallbackParsed).length) {
+          return fallbackParsed;
+        }
+        const reason = String(parseErr?.message || "invalid JSON");
+        throw new Error(`invalid JSON (${reason})`);
+      }
+    }
+  }
+}
+
+function extractLikelyJsonBlock(text) {
+  const value = String(text || "").trim();
+  const firstSquare = value.indexOf("[");
+  const lastSquare = value.lastIndexOf("]");
+  if (!(firstSquare === -1 || lastSquare === -1 || lastSquare <= firstSquare)) {
+    return value.slice(firstSquare, lastSquare + 1);
+  }
+
+  const firstBrace = value.indexOf("{");
+  const lastBrace = value.lastIndexOf("}");
+  if (!(firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace)) {
+    return value.slice(firstBrace, lastBrace + 1);
+  }
+  return value;
+}
+
+function normalizeImportJsonText(rawText) {
+  let text = String(rawText || "").trim();
+  if (!text) return "";
+  text = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+  text = text
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
+    .replace(/\u00A0/g, " ");
+  return text;
+}
+
+function repairCommonImportJsonIssues(rawText) {
+  let text = String(rawText || "").trim();
+  if (!text) return text;
+
+  const looksArray = text.startsWith("[");
+  if (!looksArray) {
+    if (!text.startsWith("{")) text = `{${text}`;
+    if (!text.endsWith("}")) text = `${text}}`;
+  }
+
+  text = text.replace(/"stats"\s*:\s*"STR"\s*:/i, "\"stats\": {\"STR\":");
+  text = text.replace(/("CHA"\s*:\s*[^,\}\n]+)\s*,\s*"ac"\s*:/i, "$1}, \"ac\":");
+
+  text = text.replace(
+    /"(features|items|spells|actions)"\s*:\s*(?=(,|\r?\n\s*"))/gi,
+    "\"$1\": []"
+  );
+  text = text.replace(/"(features|items|spells|actions)"\s*:\s*""/gi, "\"$1\": []");
+  text = text.replace(/"(features|items|spells|actions)"\s*:\s*null/gi, "\"$1\": []");
+
+  text = text.replace(/,\s*([}\]])/g, "$1");
+  return text;
+}
+
+function applyImportedBlueprintDefaults(parsed) {
+  if (!parsed || typeof parsed !== "object") return;
+
+  const listFields = ["features", "items", "spells", "actions"];
+  for (const field of listFields) {
+    const value = parsed[field];
+    if (Array.isArray(value)) {
+      parsed[field] = value
+        .map((entry) => String(entry || "").trim())
+        .filter(Boolean);
+      continue;
+    }
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (!text || /^(none|null|n\/a|[-–—,;]+)$/i.test(text)) {
+        parsed[field] = [];
+        continue;
+      }
+      const list = text
+        .split(/[\r\n,;]+/)
+        .map((entry) => String(entry || "").replace(/^"+|"+$/g, "").trim())
+        .filter((entry) => entry && !/^[-–—]+$/.test(entry));
+      parsed[field] = list.length ? list : [];
+      continue;
+    }
+    parsed[field] = [];
+  }
+
+  if (typeof parsed.name !== "string" || !parsed.name.trim()) parsed.name = "Imported NPC";
+  if (typeof parsed.race !== "string") parsed.race = "";
+  if (!parsed.className && parsed.class) parsed.className = String(parsed.class || "").trim();
+
+  if (!parsed.stats && parsed.abilities) {
+    parsed.stats = parsed.abilities;
+  }
+}
+
+function parseQuotedKeyValueFallback(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) return null;
+
+  const out = {};
+  const keyRe = /"([^"]+)"\s*:/g;
+  const matches = Array.from(text.matchAll(keyRe));
+  if (!matches.length) return null;
+
+  for (let i = 0; i < matches.length; i++) {
+    const current = matches[i];
+    const key = String(current[1] || "").trim();
+    if (!key) continue;
+    const valueStart = current.index + current[0].length;
+    const valueEnd = i + 1 < matches.length ? matches[i + 1].index : text.length;
+    let rawValue = text.slice(valueStart, valueEnd).trim();
+    rawValue = rawValue.replace(/,\s*$/, "").trim();
+    if (!rawValue) continue;
+
+    if (key.toLowerCase() === "stats") {
+      const stats = parseStatsFromLooseText(rawValue);
+      if (Object.keys(stats).length) out.stats = stats;
+      continue;
+    }
+
+    const parsedValue = parseLooseScalarOrArray(rawValue);
+    out[key] = parsedValue;
+  }
+
+  if (!out.stats) {
+    const stats = parseStatsFromLooseText(text);
+    if (Object.keys(stats).length) out.stats = stats;
+  }
+
+  return out;
+}
+
+function parseQuotedArrayFallback(rawText) {
+  const blocks = extractTopLevelObjectBlocks(rawText);
+  if (blocks.length < 2) return null;
+  const parsed = [];
+  for (const block of blocks) {
+    const strict = parseLooseObjectBlock(block);
+    if (strict && typeof strict === "object" && !Array.isArray(strict) && Object.keys(strict).length) {
+      parsed.push(strict);
+    }
+  }
+  return parsed.length ? parsed : null;
+}
+
+function parseLooseObjectBlock(rawText) {
+  const source = String(rawText || "").trim();
+  if (!source) return null;
+  try {
+    return JSON.parse(source);
+  } catch {
+    // continue
+  }
+  const repaired = repairCommonImportJsonIssues(source);
+  try {
+    return JSON.parse(repaired);
+  } catch {
+    // continue
+  }
+  const fallback = parseQuotedKeyValueFallback(source) || parseQuotedKeyValueFallback(repaired);
+  return fallback && Object.keys(fallback).length ? fallback : null;
+}
+
+function extractTopLevelObjectBlocks(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) return [];
+  const blocks = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start !== -1) {
+        blocks.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return blocks;
+}
+
+function parseLooseScalarOrArray(rawValue) {
+  const value = String(rawValue || "").trim();
+  if (!value) return "";
+  if (/^[,;]+$/.test(value)) return "";
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    // continue
+  }
+
+  if (value.startsWith("[") && !value.endsWith("]")) {
+    try {
+      return JSON.parse(`${value}]`);
+    } catch {
+      // continue
+    }
+  }
+
+  const quotedValues = extractQuotedValues(value);
+  if (quotedValues.length > 1) {
+    return quotedValues;
+  }
+
+  if (/^".*"$/.test(value)) {
+    return value.slice(1, -1);
+  }
+  if (/^(true|false)$/i.test(value)) {
+    return value.toLowerCase() === "true";
+  }
+  if (/^-?\d+(\.\d+)?$/.test(value)) {
+    return Number(value);
+  }
+  return value.replace(/^"+|"+$/g, "").trim();
+}
+
+function extractQuotedValues(rawText) {
+  const text = String(rawText || "");
+  if (!text) return [];
+  const values = [];
+  const re = /"((?:\\.|[^"\\])*)"/g;
+  let match = re.exec(text);
+  while (match) {
+    const decoded = String(match[1] || "")
+      .replace(/\\"/g, "\"")
+      .replace(/\\n/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (decoded) values.push(decoded);
+    match = re.exec(text);
+  }
+  return values;
+}
+
+function parseStatsFromLooseText(rawText) {
+  const text = String(rawText || "");
+  const stats = {};
+  const statKeys = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
+  for (const key of statKeys) {
+    const re = new RegExp(`"${key}"\\s*:\\s*(-?\\d{1,2})`, "i");
+    const match = re.exec(text);
+    if (!match) continue;
+    stats[key] = Number(match[1]);
+  }
+  return stats;
 }

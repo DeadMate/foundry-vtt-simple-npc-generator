@@ -1,7 +1,11 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Rework NPC generator dialog UI (cleaner layout, better contrast/readability, improved AI controls).
+- Fix option persistence so selected settings remain between dialog reopenings.
+- Improve manual ChatGPT import robustness (handles malformed JSON better and correctly imports multi-NPC encounter payloads).
+- Add gender selector (`Random` / `Male` / `Female`) and pass it through local + AI generation contexts.
+- Add interface-language aware AI prompting and compendium lookup priorities, with English fallback.
 
 ## 0.5.5
 - Add `Use AI` toggle that reveals AI controls and `Create AI NPC` (works for main and encounter flows).
@@ -9,6 +13,10 @@
 - Switch full-AI NPC generation to strict JSON schema/field-order prompt and map new fields (`class`, `stats`, `items`, `actions`, `personality`, `description`).
 - Improve full-AI import flow with compendium item resolution, race/species matching, and AI-provided alignment support.
 - Reduce token generation defaults to lower-cost mode (`gpt-image-1-mini` + `quality: low`).
+- Add **Copy ChatGPT Prompt** for manual (no API key) generation workflow.
+- Add **Import ChatGPT NPC JSON** button to create NPCs from pasted ChatGPT JSON output.
+- Add dedicated encounter prompt mode (`Copy ChatGPT Prompt`) for multi-NPC JSON array output.
+- Expand JSON import to accept both single-object and array payloads, including loose/partially malformed ChatGPT formatting.
 
 ## 0.5.4
 - Fix race picker to include only `race/species` compendium entries (exclude racial features like Fey Ancestry/Breath Weapon)

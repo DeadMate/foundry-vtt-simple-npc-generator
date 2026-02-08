@@ -225,10 +225,12 @@ export async function generateNpcFlavorWithOpenAi(npc) {
   );
   const endpoint = `${baseUrl}/chat/completions`;
 
+  const language = getInterfaceLanguageContext();
   const systemPrompt = [
     "You generate high-quality D&D 5e NPC flavor for live tabletop play.",
     "Return strict JSON only with keys: name, appearance, speech, motivation, secret, hook, quirk, rumor, mannerism.",
     "Write concrete, playable text; avoid vague fragments and generic filler.",
+    `Write all flavor text in ${language.name}.`,
     "Every non-empty text field must be a complete sentence.",
     "Do not use markdown. Do not add extra keys."
   ].join(" ");
@@ -306,10 +308,13 @@ export async function generateFullNpcWithOpenAi(context = {}) {
   );
   const endpoint = `${baseUrl}/chat/completions`;
 
+  const language = getInterfaceLanguageContext();
   const systemPrompt = [
     "You generate complete D&D 5e NPC blueprints for Foundry VTT import.",
     "Return strict JSON only.",
     "Prioritize practical gameplay output: coherent stats, concrete personality, and real compendium-friendly item names.",
+    `Write narrative fields in ${language.name}.`,
+    `Prefer item/spell/feature/action names in ${language.name} if available; otherwise use English canonical names.`,
     "Use canonical D&D-style item, spell, and feature naming where possible.",
     "Do not include markdown or explanation text."
   ].join(" ");
@@ -325,7 +330,7 @@ export async function generateFullNpcWithOpenAi(context = {}) {
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: buildFullNpcPrompt(context) }
+      { role: "user", content: buildFullNpcPrompt(context, { manualCodeBlock: false }) }
     ]
   };
 
@@ -336,6 +341,71 @@ export async function generateFullNpcWithOpenAi(context = {}) {
 
   const parsed = parseJsonContent(content);
   return normalizeAiFullNpc(parsed, context);
+}
+
+/**
+ * Build manual ChatGPT prompt for full NPC blueprint generation (no API required in module)
+ * @param {Object} context - Generation context from dialog options
+ * @returns {string}
+ */
+export function buildManualFullNpcPrompt(context = {}) {
+  return buildFullNpcPrompt(context, { manualCodeBlock: true });
+}
+
+/**
+ * Build manual ChatGPT prompt for encounter generation (multiple NPCs in one JSON array)
+ * @param {Object} context - Generation context from dialog options
+ * @returns {string}
+ */
+export function buildManualEncounterNpcPrompt(context = {}) {
+  const count = clampNumber(context.count, 1, 50, 3);
+  const tier = clampNumber(context.tier, 1, 4, 1);
+  const suggestedLevel = tierToLevel(tier);
+  const language = getInterfaceLanguageContext();
+  const preferredTags = Array.isArray(context.archetypeTags)
+    ? context.archetypeTags.map((value) => sanitizeFlavorText(value, 24)).filter(Boolean)
+    : [];
+
+  return [
+    "Output the final answer inside exactly one ```json code block``` for easy copy.",
+    "Do not include any text before or after the code block.",
+    "Inside the code block, output a JSON array (not an object).",
+    `The array must contain exactly ${count} NPC objects.`,
+    "Each NPC object must follow this exact key order and data shape:",
+    ...getFullNpcSchemaLines(),
+    "",
+    "Strict formatting rules:",
+    "- JSON inside the code block must be parseable by JSON.parse.",
+    "- Use double quotes for all keys and string values.",
+    "- No trailing commas.",
+    "- \"stats\" must be an object, not a string.",
+    "- \"features\", \"items\", \"spells\", \"actions\" must always be arrays (use [] if empty).",
+    "- If unknown: use \"None\", 0, or [] (never null).",
+    "- After the required keys, also include these extra keys in this order for richer import:",
+    "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
+    `- Write narrative text fields in ${language.name}.`,
+    `- Prefer item/spell/feature/action names in ${language.name}; if unavailable use English canonical names.`,
+    "",
+    "Encounter consistency rules:",
+    "- Keep NPCs coherent as one encounter group.",
+    "- Vary names and personalities to avoid duplicates.",
+    "- Respect the same tier/difficulty context across all entries.",
+    "",
+    "Context preferences:",
+    `- NPC count: ${count}`,
+    `- Tier target: ${tier}`,
+    `- Suggested level: ${suggestedLevel}`,
+    `- Preferred race: ${sanitizeFlavorText(context.race || "", 60) || "Any"}`,
+    `- Preferred gender: ${formatGenderPreference(context.gender)}`,
+    `- Preferred class/archetype: ${sanitizeFlavorText(context.className || context.archetypeName || "", 80) || "Any"}`,
+    `- Preferred attack style: ${sanitizeFlavorText(context.attackStyle || "", 20) || "Any"}`,
+    `- Preferred tags: ${preferredTags.length ? preferredTags.join(", ") : "Any"}`,
+    `- Preferred culture: ${sanitizeFlavorText(context.culture || "", 50) || "Any"}`,
+    `- Budget hint: ${sanitizeFlavorText(context.budget || "", 20) || "normal"}`,
+    `- Important NPC: ${context.importantNpc ? "yes" : "no"}`,
+    `- Encounter difficulty: ${sanitizeFlavorText(context.encounterDifficulty || "", 20) || "medium"}`,
+    `- Interface language: ${language.code}`
+  ].join("\n");
 }
 
 /**
@@ -389,47 +459,94 @@ export async function generateNpcTokenImageWithOpenAi(npc) {
   return uploadedPath || `${targetDir}/${file.name}`;
 }
 
-function buildFullNpcPrompt(context = {}) {
+function buildFullNpcPrompt(context = {}, options = {}) {
+  const manualCodeBlock = !!options.manualCodeBlock;
   const tier = clampNumber(context.tier, 1, 4, 1);
   const suggestedLevel = tierToLevel(tier);
+  const language = getInterfaceLanguageContext();
+  const preferredTags = Array.isArray(context.archetypeTags)
+    ? context.archetypeTags.map((value) => sanitizeFlavorText(value, 24)).filter(Boolean)
+    : [];
 
   return [
-    "Generate a single valid D&D 5e NPC blueprint for Foundry VTT import, formatted exactly as a JSON object matching the specified schema and field order.",
-    "Do not include markdown, explanations, or any non-JSON content.",
-    "Required JSON fields, in this order:",
-    '- "name" (string): Full NPC name.',
-    '- "race" (string): NPC race.',
-    '- "class" (string): Character class or "None" if not applicable.',
-    '- "background" (string): Background or brief descriptor if none applies.',
-    '- "alignment" (string): Alignment (example: "Neutral Good").',
-    '- "level" (integer): Effective character level if appropriate.',
-    '- "stats" (object): Keys "STR", "DEX", "CON", "INT", "WIS", "CHA" (integers 3-20).',
-    '- "ac" (integer): Armor Class.',
-    '- "hp" (integer): Hit points.',
-    '- "speed" (string): Movement speed (example: "30 ft.").',
-    '- "features" (array of strings): Features or abilities.',
-    '- "items" (array of strings): Items matching official D&D 5e entries.',
-    '- "spells" (array of strings): Known spells, or [] if none.',
-    '- "actions" (array of strings): Actions or attacks.',
-    '- "personality" (string): Concise summary (1-2 sentences).',
-    '- "description" (string): Physical appearance and distinctive traits.',
-    "All fields must be present.",
-    "Use strictly canonical D&D 5e names.",
-    'Use sensible defaults if unknown: "None", 0, or [] as appropriate.',
-    "JSON must be strictly valid, with double quotes and no trailing commas.",
-    "Field order is mandatory.",
+    manualCodeBlock
+      ? "Output the final answer inside exactly one ```json code block``` for easy copy."
+      : "You must output ONLY one valid JSON object.",
+    manualCodeBlock
+      ? "Do not include any text before or after the code block."
+      : "Do not output markdown.",
+    manualCodeBlock ? "Do not include explanations or comments." : "Do not output code fences.",
+    manualCodeBlock ? "Inside the code block, output exactly one JSON object." : "Do not output comments.",
+    manualCodeBlock ? "JSON inside the code block must be valid for JSON.parse." : "Do not output explanations.",
+    manualCodeBlock ? "No extra prose." : "No text before or after the JSON object.",
     "",
-    "Context to follow:",
-    `- Suggested tier: ${tier} (suggested level: ${suggestedLevel})`,
+    "Generate one D&D 5e NPC blueprint for Foundry VTT.",
+    "Use canonical D&D 5e names for items, spells, features, and actions whenever possible.",
+    "All keys are required.",
+    "Use this EXACT key order and data shape:",
+    ...getFullNpcSchemaLines(),
+    "",
+    "Strict formatting rules:",
+    "- JSON must be parseable by JSON.parse.",
+    "- Use double quotes for all keys and string values.",
+    "- No trailing commas.",
+    "- \"stats\" must be an object, not a string.",
+    "- \"features\", \"items\", \"spells\", \"actions\" must always be arrays (use [] if empty).",
+    "- If unknown: use \"None\", 0, or [] (never null).",
+    "- After the required keys, also include these extra keys in this order for richer import:",
+    "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
+    `- Write narrative text fields in ${language.name}.`,
+    `- Prefer item/spell/feature/action names in ${language.name}; if unavailable use English canonical names.`,
+    "",
+    "Content rules:",
+    "- Keep values practical for a coherent playable NPC.",
+    "- Keep personality to 1-2 sentences.",
+    "- Keep description concise and visual.",
+    "",
+    "Context preferences:",
+    `- Tier target: ${tier}`,
+    `- Suggested level: ${suggestedLevel}`,
     `- Preferred race: ${sanitizeFlavorText(context.race || "", 60) || "Any"}`,
-    `- Preferred class/archetype hint: ${sanitizeFlavorText(context.className || context.archetypeName || "", 80) || "Any"}`,
-    `- Preferred attack style hint: ${sanitizeFlavorText(context.attackStyle || "", 20) || "Any"}`,
-    `- Preferred tags hint: ${Array.isArray(context.archetypeTags) ? context.archetypeTags.join(", ") : "Any"}`,
+    `- Preferred gender: ${formatGenderPreference(context.gender)}`,
+    `- Preferred class/archetype: ${sanitizeFlavorText(context.className || context.archetypeName || "", 80) || "Any"}`,
+    `- Preferred attack style: ${sanitizeFlavorText(context.attackStyle || "", 20) || "Any"}`,
+    `- Preferred tags: ${preferredTags.length ? preferredTags.join(", ") : "Any"}`,
     `- Preferred culture: ${sanitizeFlavorText(context.culture || "", 50) || "Any"}`,
     `- Budget hint: ${sanitizeFlavorText(context.budget || "", 20) || "normal"}`,
     `- Important NPC: ${context.importantNpc ? "yes" : "no"}`,
-    `- Encounter difficulty hint: ${sanitizeFlavorText(context.encounterDifficulty || "", 20) || "medium"}`
+    `- Encounter difficulty: ${sanitizeFlavorText(context.encounterDifficulty || "", 20) || "medium"}`,
+    `- Interface language: ${language.code}`
   ].join("\n");
+}
+
+function getFullNpcSchemaLines() {
+  return [
+    "{",
+    "  \"name\": \"...\",",
+    "  \"race\": \"...\",",
+    "  \"class\": \"...\",",
+    "  \"background\": \"...\",",
+    "  \"alignment\": \"...\",",
+    "  \"level\": 0,",
+    "  \"stats\": {",
+    "    \"STR\": 0,",
+    "    \"DEX\": 0,",
+    "    \"CON\": 0,",
+    "    \"INT\": 0,",
+    "    \"WIS\": 0,",
+    "    \"CHA\": 0",
+    "  },",
+    "  \"ac\": 0,",
+    "  \"hp\": 0,",
+    "  \"speed\": \"30 ft.\",",
+    "  \"features\": [\"...\"],",
+    "  \"items\": [\"...\"],",
+    "  \"spells\": [\"...\"],",
+    "  \"actions\": [\"...\"],",
+    "  \"personality\": \"...\",",
+    "  \"description\": \"...\"",
+    "}"
+  ];
 }
 
 function normalizeAiFullNpc(data, context = {}) {
@@ -896,6 +1013,29 @@ function normalizeBaseUrl(baseUrl) {
   return clean.replace(/\/+$/, "");
 }
 
+function getInterfaceLanguageContext() {
+  const coreLang = game.settings?.get?.("core", "language");
+  const raw = String(game.i18n?.lang || coreLang || "en").trim().toLowerCase();
+  const codeMatch = raw.match(/^[a-z]{2}/);
+  const code = codeMatch ? codeMatch[0] : "en";
+  const nameByCode = {
+    ru: "Russian",
+    en: "English"
+  };
+  return {
+    code,
+    raw,
+    name: nameByCode[code] || raw || "English"
+  };
+}
+
+function formatGenderPreference(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["male", "m", "man"].includes(normalized)) return "Male";
+  if (["female", "f", "woman"].includes(normalized)) return "Female";
+  return "Any";
+}
+
 function parseJsonContent(content) {
   try {
     return JSON.parse(content);
@@ -994,10 +1134,15 @@ function buildFlavorPrompt(npc, options = {}) {
   const attempt = Number(options.attempt || 0);
   const feedbackIssues = Array.isArray(options.feedbackIssues) ? options.feedbackIssues : [];
   const previousFlavor = options.previousFlavor || null;
+  const language = getInterfaceLanguageContext();
 
   return JSON.stringify({
     task: "Generate rich, actionable NPC flavor text for D&D 5e.",
     qualityTarget: "Output must feel like a GM-ready NPC handout, not fragments.",
+    language: {
+      interfaceCode: language.code,
+      writeFlavorIn: language.name
+    },
     outputSchema: {
       name: "2-4 words full fantasy-style name, culturally fitting, readable, and suitable for reuse in an Actor sheet",
       appearance: "array of 3 physical details, each 4-10 words, concrete and visual",
@@ -1015,11 +1160,13 @@ function buildFlavorPrompt(npc, options = {}) {
       "No duplicated appearance nouns (example: two scarf details).",
       "Keep tone grounded and playable for a live session.",
       "Keep generated name close to culture; avoid joke names or modern slang.",
-      "Use specific nouns (person, place, object, faction, ritual, debt, letter, relic, etc)."
+      "Use specific nouns (person, place, object, faction, ritual, debt, letter, relic, etc).",
+      `Write every output text field in ${language.name}.`
     ],
     npc: {
       name: String(npc?.name || ""),
       race: String(npc?.race || ""),
+      gender: String(npc?.gender || "random"),
       tier: Number(npc?.tier || 1),
       archetype: String(npc?.archetype?.name || ""),
       className: String(npc?.className || ""),

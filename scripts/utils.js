@@ -5,6 +5,37 @@
 
 import { BUDGET_RANGES } from "./constants.js";
 
+const LOOKUP_ALIAS_GROUPS = [
+  [
+    "half plate",
+    "half-plate",
+    "полулаты",
+    "кольчужно-латный доспех",
+    "кольчужно латный доспех"
+  ],
+  [
+    "studded leather armor",
+    "studded leather",
+    "шипованная кожаная броня",
+    "шипованный кожаный доспех"
+  ],
+  ["chain mail", "chainmail", "кольчуга", "кольчужный доспех"],
+  ["plate armor", "plate", "full plate", "латы", "латный доспех", "полный латный доспех"],
+  ["shield", "щит"],
+  ["shortbow", "короткий лук"],
+  ["longbow", "длинный лук"],
+  ["rapier", "рапира"],
+  ["thieves' tools", "thieves tools", "инструменты вора", "воровские инструменты"],
+  [
+    "potion of greater healing",
+    "greater healing potion",
+    "зелье большого лечения",
+    "зелье великого лечения"
+  ]
+];
+
+const LOOKUP_ALIAS_MAP = buildLookupAliasMap(LOOKUP_ALIAS_GROUPS);
+
 /**
  * Pick a random element from an array
  * @param {Array} arr - Array to pick from
@@ -172,7 +203,13 @@ export function getSearchStrings(entry) {
   const add = (value) => {
     if (!value) return;
     const str = String(value).trim().toLowerCase();
-    if (str) out.add(str);
+    if (!str) return;
+    out.add(str);
+    const normalized = normalizeLookupText(str);
+    if (normalized) out.add(normalized);
+    for (const alias of LOOKUP_ALIAS_MAP.get(normalized) || []) {
+      out.add(alias);
+    }
   };
 
   add(entry.name);
@@ -284,4 +321,30 @@ export function pickByBudget(candidates, budget, allowMagic, priceFn) {
     default:
       return pickRange(0.3, 0.7);
   }
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[`'’"]/g, "")
+    .replace(/[^a-zа-я0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildLookupAliasMap(groups) {
+  const map = new Map();
+  for (const group of groups || []) {
+    const normalized = Array.from(
+      new Set((group || []).map((entry) => normalizeLookupText(entry)).filter(Boolean))
+    );
+    for (const term of normalized) {
+      const aliases = normalized.filter((entry) => entry !== term);
+      if (!aliases.length) continue;
+      const existing = map.get(term) || [];
+      map.set(term, Array.from(new Set([...existing, ...aliases])));
+    }
+  }
+  return map;
 }

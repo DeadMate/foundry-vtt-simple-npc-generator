@@ -23,6 +23,10 @@ One-click NPC generator for Foundry VTT. Creates a ready-to-play 5e NPC with sta
 - Optional OpenAI token image generation from NPC description
 - Shared `Use AI (OpenAI)` toggle that shows/hides AI controls in the generator dialog
 - Dedicated **Create AI NPC** button for full AI blueprint generation (stats + skills + gear/spells/features via compendium lookup)
+- **Copy ChatGPT Prompt** action for no-API users (single NPC or multi-NPC encounter prompt)
+- **Import ChatGPT NPC JSON** action to create NPC from pasted JSON response
+- AI prompts now include current Foundry interface language and request localized output (with English fallback for item/spell names)
+- Spell compendium lookup prioritizes packs matching interface language, then falls back to English packs
 - Compendium cache builder (faster, uses all Item compendiums)
 
 ## Usage
@@ -34,6 +38,7 @@ One-click NPC generator for Foundry VTT. Creates a ready-to-play 5e NPC with sta
 4) In the NPC dialog, enable **Use AI (OpenAI)** to reveal AI actions/options.
 5) Use **Create NPC** for local generation, or **Create AI NPC** for full AI blueprint generation.
 6) (Optional) Toggle **AI flavor (OpenAI)** and/or **AI token from description (OpenAI)**.
+7) No API flow: click **Copy ChatGPT Prompt** → run prompt in ChatGPT → paste response via **Import ChatGPT NPC JSON** (accepts object or array; prompt requests strict schema plus extra flavor keys for better biography import).
 
 ## Custom Tokens
 - Default local token folder: `modules/npc-button-5e/assets/tokens/`

@@ -39,9 +39,84 @@ export { getItemPriceValue, pickByBudget } from "./utils.js";
  * @returns {string[]} Array of pack collection names
  */
 export function getPacks(kind) {
-  return DATA_CACHE.compendiumLists?.[kind]?.length
+  const base = DATA_CACHE.compendiumLists?.[kind]?.length
     ? DATA_CACHE.compendiumLists[kind]
     : COMPENDIUMS[kind];
+  const packs = Array.from(new Set((base || []).filter(Boolean)));
+  if (!packs.length) return [];
+  if (kind !== "spells") return packs;
+  return prioritizeSpellPacksByInterfaceLanguage(packs);
+}
+
+/**
+ * Prioritize spell compendium packs by interface language,
+ * falling back to English packs when localized packs are unavailable.
+ * @param {string[]} packs - Pack names
+ * @returns {string[]} Reordered packs
+ */
+function prioritizeSpellPacksByInterfaceLanguage(packs) {
+  const lang = getInterfaceLanguageCode();
+  if (!lang) return packs;
+
+  const preferred = [];
+  const englishFallback = [];
+  const other = [];
+
+  for (const packName of packs) {
+    const packLang = detectPackLanguage(packName, "spells");
+    if (packLang === lang) {
+      preferred.push(packName);
+      continue;
+    }
+    if (packLang === "en") {
+      englishFallback.push(packName);
+      continue;
+    }
+    other.push(packName);
+  }
+
+  return Array.from(new Set([...preferred, ...englishFallback, ...other]));
+}
+
+/**
+ * Detect current Foundry interface language code
+ * @returns {string} Normalized language code (e.g. ru, en)
+ */
+function getInterfaceLanguageCode() {
+  const coreLang = game.settings?.get?.("core", "language");
+  const lang = String(game.i18n?.lang || coreLang || "en").trim().toLowerCase();
+  const match = lang.match(/^[a-z]{2}/);
+  return match ? match[0] : "en";
+}
+
+/**
+ * Detect pack language from collection/title metadata
+ * @param {string} packName - Pack collection name
+ * @param {string} kind - Pack kind
+ * @returns {"ru"|"en"|"other"} Detected language
+ */
+function detectPackLanguage(packName, kind) {
+  const collection = String(packName || "").toLowerCase();
+  const pack = game.packs?.get(packName);
+  const title = String(
+    pack?.title ||
+    pack?.metadata?.label ||
+    DATA_CACHE.compendiumCache?.packs?.[packName]?.label ||
+    ""
+  ).toLowerCase();
+  const source = `${collection} ${title}`;
+
+  if (/(^|[\s._/-])(ru|rus)([\s._/-]|$)|russian|рус|русск|кирил|cyril/i.test(source)) {
+    return "ru";
+  }
+  if (
+    (Array.isArray(COMPENDIUMS?.[kind]) && COMPENDIUMS[kind].includes(packName)) ||
+    collection.startsWith("dnd5e.") ||
+    /(^|[\s._/-])(en|eng)([\s._/-]|$)|english|англ/i.test(source)
+  ) {
+    return "en";
+  }
+  return "other";
 }
 
 /**
@@ -457,7 +532,7 @@ export async function getRandomItemByKeywordsFromAllPacksWithBudget(
   budget,
   allowMagic = false
 ) {
-  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  const normalized = expandLookupKeywords(keywords);
   const candidates = [];
   for (const packName of packs) {
     const pack = game.packs?.get(packName);
@@ -493,7 +568,7 @@ export async function getRandomItemByKeywordsFromAllPacksWithBudget(
  * @returns {Promise<Object|null>}
  */
 export async function getRandomItemByKeywords(packs, keywords, predicate) {
-  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  const normalized = expandLookupKeywords(keywords);
   for (const packName of packs) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
@@ -525,7 +600,7 @@ export async function getRandomItemByKeywords(packs, keywords, predicate) {
  * @returns {Promise<Object|null>}
  */
 export async function getRandomItemByKeywordsWithBudget(packs, keywords, predicate, budget, allowMagic = false) {
-  const normalized = (keywords || []).map((k) => k.toLowerCase());
+  const normalized = expandLookupKeywords(keywords);
   for (const packName of packs) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
@@ -555,8 +630,10 @@ export async function getRandomItemByKeywordsWithBudget(packs, keywords, predica
  * @returns {Promise<Object|null>}
  */
 export async function getItemByNameFromPacks(packs, name) {
-  const target = String(name || "").trim().toLowerCase();
+  const target = String(name || "").trim();
   if (!target) return null;
+  const targets = new Set(getSearchStrings({ name: target }));
+  if (!targets.size) return null;
 
   for (const packName of packs) {
     const pack = game.packs?.get(packName);
@@ -565,7 +642,7 @@ export async function getItemByNameFromPacks(packs, name) {
     const index = await getPackIndex(pack, getItemIndexFields());
     const match = index.find((entry) => {
       const haystack = getSearchStrings(entry);
-      return haystack.includes(target);
+      return haystack.some((needle) => targets.has(needle));
     });
     if (!match) continue;
 
@@ -575,6 +652,16 @@ export async function getItemByNameFromPacks(packs, name) {
   }
 
   return null;
+}
+
+function expandLookupKeywords(keywords) {
+  const out = new Set();
+  for (const rawKeyword of keywords || []) {
+    for (const term of getSearchStrings({ name: rawKeyword })) {
+      out.add(term);
+    }
+  }
+  return Array.from(out);
 }
 
 /**
