@@ -4,63 +4,154 @@
 [![CI Status](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/actions/workflows/release.yml/badge.svg)](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/actions/workflows/release.yml)
 [![Downloads](https://img.shields.io/github/downloads/DeadMate/foundry-vtt-simple-npc-generator/total)](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases)
 
-# Simple NPC Generator (D&D 5e)
+# NPC Button (D&D 5e)
 
-One-click NPC generator for Foundry VTT. Creates a ready-to-play 5e NPC with stats, gear, spells/features, and a short description.
+Fast NPC, encounter, and shop generation for Foundry VTT `dnd5e`.
 
-## Features
-- NPC Button in Actors sidebar
-- Class/role-based gear from compendiums
-- Spells/features from compendiums
-- Race selection from compendiums (searchable)
-- Budget tiers for gear quality (Poor/Normal/Well-Off/Elite)
-- Random token silhouettes with archetype mapping
-- Bulk NPC generation with count controls
-- Encounter mode (auto-balanced count/tier, Encounter-N folders)
-- Optional folder placement (remembers last used)
-- Optional loot, secrets, quest hooks
-- Optional OpenAI flavor generation (GM-only API key, stored locally in GM browser)
-- Optional OpenAI token image generation from NPC description
-- Shared `Use AI (OpenAI)` toggle that shows/hides AI controls in the generator dialog
-- Dedicated **Create AI NPC** button for full AI blueprint generation (stats + skills + gear/spells/features via compendium lookup)
-- **Copy ChatGPT Prompt** action for no-API users (single NPC or multi-NPC encounter prompt)
-- **Import ChatGPT NPC JSON** action to create NPC from pasted JSON response
-- AI prompts now include current Foundry interface language and request localized output (with English fallback for item/spell names)
-- Spell compendium lookup prioritizes packs matching interface language, then falls back to English packs
-- Compendium cache builder (faster, uses all Item compendiums)
+This module adds a single **NPC Button** to the Actors sidebar and gives you three workflows in one dialog:
+- **Main NPC**: create one or many playable NPCs.
+- **Encounter**: generate encounter-ready groups with auto balancing and foldering.
+- **Shop**: generate a shopkeeper actor with localized stock pulled from compendiums.
 
-## Usage
-1) Open the Actors sidebar and click **NPC Button**.
-2) (Recommended) Click **Build Compendium Cache** once as GM.
-3) (Optional, AI) In **Module Settings → NPC Button (D&D 5e)**:
-   - Set text/image model and base URL if needed
-   - Click **Set API Key** and paste your key (saved in GM client setting only)
-4) In the NPC dialog, enable **Use AI (OpenAI)** to reveal AI actions/options.
-5) Use **Create NPC** for local generation, or **Create AI NPC** for full AI blueprint generation.
-6) (Optional) Toggle **AI flavor (OpenAI)** and/or **AI token from description (OpenAI)**.
-7) No API flow: click **Copy ChatGPT Prompt** → run prompt in ChatGPT → paste response via **Import ChatGPT NPC JSON** (accepts object or array; prompt requests strict schema plus extra flavor keys for better biography import).
+## Highlights
 
-## Custom Tokens
-- Default local token folder: `modules/npc-button-5e/assets/tokens/`
-- To use your own local tokens, add files there and update `TOKEN_ASSETS` in `scripts/constants.js`.
-- Archetype-to-token-style matching is configured by `TOKEN_ROLE_MAP` in `scripts/constants.js`.
-- Detailed guide: `docs/custom-tokens.md`
-
-## AI Cost & Responsibility
-- OpenAI features (flavor and token image generation) use paid API calls.
-- Token generation now defaults to a lower-cost profile (`gpt-image-1-mini`, `quality: low`), but API usage is still paid.
-- You are responsible for your OpenAI account, usage limits, billing, and generated content.
-- This module author does not provide cost reimbursement and is not liable for third-party API charges or output.
-
-## Release Notes (Dev)
-- Before pushing, update the **Unreleased** section in `CHANGELOG.md`.
-- The release workflow bumps the version only if module files changed:
-  `module.json`, `scripts/`, `data/`, `assets/`, or `templates/`.
+- Sidebar button integration in the Actors directory.
+- Compendium-backed generation for items, spells, and features.
+- Race/species selection from compendiums with searchable dropdown.
+- Budget tiers (`poor`, `normal`, `well`, `elite`) for item quality.
+- Encounter generator with auto count/tier by party setup and difficulty.
+- Automatic encounter folders: `Encounter-N`.
+- Shop generator with shop types:
+  - `market`, `general`, `alchemy`, `scrolls`, `weapons`, `armor`, `food`
+- Automatic localized shop folders:
+  - EN example: `Shop-Market-1`
+  - RU example: `Магазин-Рынок-1`
+- Shop stock is added directly to the created shopkeeper actor (no separate table flow).
+- Shop prices come from compendium items, then roll with `+-30%`, and are normalized to integer `gp`.
+- Interface-language-aware compendium matching with English fallback.
+- Optional OpenAI integration for full AI NPC generation, flavor text, and token images.
+- Manual no-API flow: copy prompt, run in ChatGPT, import JSON back.
 
 ## Requirements
-- Foundry VTT
-- dnd5e system
 
-## Notes
-- Cache file: `data/compendium-cache.json` (generated, not committed)
+- Foundry VTT (compatibility: minimum `11`, verified `13`)
+- `dnd5e` game system
+
+## Installation
+
+Install via Foundry manifest URL:
+
+```text
+https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases/latest/download/module.json
+```
+
+## Quick Start
+
+1. Open the **Actors** sidebar.
+2. Click **NPC Button**.
+3. (Recommended, GM) click **Build Cache** once.
+4. Pick a tab:
+   - **Main NPC** for single/batch NPCs
+   - **Encounter** for group generation
+   - **Shop** for shopkeeper + inventory
+5. Click **Create**.
+
+## Generator Modes
+
+### Main NPC
+
+- Archetype, tier, budget, culture, gender, race/species.
+- Optional add-ons: loot, secret, quest hook, boss.
+- Batch creation with count control.
+- Optional target actor folder.
+
+### Encounter
+
+- Encounter race + archetype template.
+- Party level, party size, difficulty (`easy` to `deadly`).
+- Count auto-adjusts from party setup.
+- Creates actors in the next `Encounter-N` folder automatically.
+
+### Shop
+
+- Shop type, item count, budget, shopkeeper tier.
+- Optional custom shop name.
+- Optional magic items toggle.
+- Creates one shopkeeper actor and fills their inventory with generated/imported stock.
+- Creates/uses localized numbered folders by shop type.
+
+## AI and Manual Workflows
+
+All AI actions are under **Use AI (OpenAI)** in the dialog.
+
+### OpenAI (direct in Foundry)
+
+- **Create AI NPC**: full NPC blueprint generation.
+- **AI flavor text**: enriches biography fields.
+- **AI token image**: generates token art from description.
+
+OpenAI usage is GM-only and requires API key setup.
+
+### Manual (no API key required)
+
+- **Copy Prompt**: generate a strict JSON prompt for ChatGPT.
+- **Import JSON**: import ChatGPT result back into Foundry.
+- Works for:
+  - Main NPC JSON
+  - Encounter JSON arrays
+  - Shop JSON imports (including item lists)
+
+## Language and Matching
+
+- Module UI supports `en` and `ru`.
+- Item/spell lookup prioritizes compendium entries matching current interface language/script.
+- If no localized match is found, import falls back to English-compatible entries.
+
+## OpenAI Settings and Privacy
+
+In **Module Settings → NPC Button (D&D 5e)**:
+- Configure text model, image model, API base URL, and max AI batch size.
+- Set API key via **Set API Key** menu.
+
+API key storage:
+- Stored as a **client setting** in the current GM browser.
+- Not synced as a world-level shared secret.
+
+## Cache and Performance
+
+- Cache build is GM-only.
+- Cache file: `data/compendium-cache.json` (generated at runtime).
+- Building cache once improves matching speed for generation/import.
+
+## Custom Tokens
+
+- Built-in token silhouettes are in:
+  - `assets/tokens/`
+- You can add your own and map archetypes in:
+  - `scripts/constants.js` (`TOKEN_ASSETS`, `TOKEN_ROLE_MAP`)
+- Detailed guide:
+  - `docs/custom-tokens.md`
+
+## Troubleshooting
+
+- No button in Actors sidebar:
+  - Ensure module is enabled and system is `dnd5e`.
+- Weak compendium matching:
+  - Rebuild cache as GM, then retry import.
+- AI buttons disabled:
+  - Enable **Use AI** and configure API key in module settings.
+- Wrong-language items/spells:
+  - Check Foundry interface language, then rebuild cache.
+
+## Changelog
+
+See `CHANGELOG.md` for release notes.
+
+## Support
+
+Issues and feedback:
+- https://github.com/DeadMate/foundry-vtt-simple-npc-generator/issues
+
+If you want to support development:
+- https://buymeacoffee.com/ddmtvtt
 
