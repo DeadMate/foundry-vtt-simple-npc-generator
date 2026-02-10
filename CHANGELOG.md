@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.9.1
 - Shop import workflow polish and AI panel cleanup.
 
 ## 0.9.0
