@@ -1,4 +1,5 @@
 import { MODULE_ID } from "./constants.js";
+import { t } from "./i18n.js";
 import { registerOpenAiSettings } from "./openai.js";
 import { addNpcButton, showChangelogIfUpdated } from "./ui.js";
 
@@ -33,7 +34,7 @@ Hooks.once("init", () => {
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "dnd5e") {
-    ui.notifications?.warn("NPC Button (D&D 5e) is designed for the dnd5e system.");
+    ui.notifications?.warn(t("main.warnWrongSystem"));
   }
   showChangelogIfUpdated();
 });

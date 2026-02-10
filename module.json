@@ -2,7 +2,7 @@
   "id": "npc-button-5e",
   "title": "NPC Button (D&D 5e)",
   "description": "One click creates a ready-to-play D&D 5e NPC with stats, abilities, loot, and a short description.",
-  "version": "0.5.6",
+  "version": "0.9.0",
   "authors": [
     {
       "name": "Dead"
@@ -12,6 +12,18 @@
     "minimum": "11",
     "verified": "13"
   },
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    },
+    {
+      "lang": "ru",
+      "name": "Русский",
+      "path": "lang/ru.json"
+    }
+  ],
   "esmodules": [
     "scripts/main.js"
   ],

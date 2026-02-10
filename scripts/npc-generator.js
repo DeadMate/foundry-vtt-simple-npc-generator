@@ -598,17 +598,17 @@ async function resolveAiBlueprintItems(npc) {
     {
       names: aiItems.equipment,
       packs: allGearPacks,
-      allowedTypes: ["equipment", "loot", "consumable"]
+      allowedTypes: ["equipment", "loot", "consumable", "tool"]
     },
     {
       names: aiItems.consumables,
-      packs: getPacks("loot"),
-      allowedTypes: ["consumable", "loot", "equipment"]
+      packs: allGearPacks,
+      allowedTypes: ["consumable", "loot", "equipment", "tool"]
     },
     {
       names: aiItems.loot,
-      packs: getPacks("loot"),
-      allowedTypes: ["loot", "consumable", "equipment"]
+      packs: allGearPacks,
+      allowedTypes: ["loot", "consumable", "equipment", "tool"]
     },
     {
       names: aiItems.spells,
@@ -629,11 +629,11 @@ async function resolveAiBlueprintItems(npc) {
   let missingItems = 0;
 
   for (const group of groups) {
-    for (const rawName of group.names || []) {
-      const name = String(rawName || "").trim();
-      if (!name) continue;
+    for (const rawEntry of group.names || []) {
+      const itemRef = normalizeAiItemReference(rawEntry);
+      if (!itemRef?.name) continue;
 
-      const item = await resolveAiNamedItem(name, group, budget);
+      const item = await resolveAiNamedItem(itemRef, group, budget);
       if (!item) {
         missingItems += 1;
         continue;
@@ -650,25 +650,71 @@ async function resolveAiBlueprintItems(npc) {
   return { items, resolvedItems, missingItems };
 }
 
-async function resolveAiNamedItem(name, group, budget) {
+async function resolveAiNamedItem(itemRef, group, budget) {
   const packs = Array.isArray(group?.packs) ? group.packs : [];
   const allowedTypes = Array.isArray(group?.allowedTypes) ? group.allowedTypes : [];
   if (!packs.length || !allowedTypes.length) return null;
 
-  const exact = await getItemByNameFromPacks(packs, name);
-  if (exact && allowedTypes.includes(String(exact.type || "").toLowerCase())) {
-    return prepareResolvedAiItem(exact, group);
+  const lookupSeeds = [itemRef.name, itemRef.lookup]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const nameCandidates = buildLookupNameCandidates(lookupSeeds);
+  if (!nameCandidates.length) return null;
+
+  const cachedLocalized = pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget);
+  if (cachedLocalized) {
+    return prepareResolvedAiItem(cachedLocalized, group);
   }
 
-  const keywords = buildLookupKeywordsFromName(name);
+  for (const candidate of nameCandidates) {
+    const exact = await getItemByNameFromPacks(packs, candidate);
+    if (exact && allowedTypes.includes(String(exact.type || "").toLowerCase())) {
+      return prepareResolvedAiItem(exact, group);
+    }
+  }
+
+  for (const candidate of nameCandidates) {
+    const cachedExact = getCachedDocByName(packs, candidate);
+    if (cachedExact && allowedTypes.includes(String(cachedExact.type || "").toLowerCase())) {
+      return prepareResolvedAiItem(cachedExact, group);
+    }
+  }
+
+  const keywords = Array.from(
+    new Set(nameCandidates.flatMap((candidate) => buildLookupKeywordsFromName(candidate)))
+  );
   if (!keywords.length) return null;
+  const strictKeywords = buildLookupKeywordsFromName(itemRef.lookup || itemRef.name);
+  const minKeywordMatches = strictKeywords.length >= 2 ? 2 : 1;
+  const ammoLike = isAmmoLikeItemRequest(itemRef.lookup || itemRef.name);
+
+  const cachedByKeywords = pickBestCachedAiItemByKeywords(
+    lookupSeeds,
+    packs,
+    allowedTypes,
+    keywords,
+    budget
+  );
+  if (cachedByKeywords) {
+    return prepareResolvedAiItem(cachedByKeywords, group);
+  }
 
   const fuzzy = await getRandomItemByKeywordsFromAllPacksWithBudget(
     packs,
     keywords,
-    (entry) => allowedTypes.includes(String(entry.type || "").toLowerCase()),
+    (entry) => {
+      const type = String(entry?.type || "").toLowerCase();
+      if (!allowedTypes.includes(type)) return false;
+
+      const haystack = getSearchStrings(entry);
+      const keywordPool = strictKeywords.length ? strictKeywords : keywords;
+      if (countKeywordHits(haystack, keywordPool) < minKeywordMatches) return false;
+
+      if (ammoLike && !isAllowedItemEntry(entry, false)) return false;
+      return true;
+    },
     budget,
-    true
+    !ammoLike
   );
   if (!fuzzy) return null;
   return prepareResolvedAiItem(fuzzy, group);
@@ -690,28 +736,28 @@ function prepareResolvedAiItem(itemDoc, group) {
 
 function normalizeAiItemGroups(rawItems) {
   const source = rawItems && typeof rawItems === "object" ? rawItems : {};
-  const flatItems = normalizeStringArrayForActor(source.items, 18, 80);
+  const flatItems = normalizeAiItemReferenceArray(source.items, 18, 80);
   const groupedFlat = splitFlatItemNamesForActor(flatItems);
   const featuresFromActions = normalizeStringArrayForActor(source.actions, 12, 100);
   return {
-    weapons: dedupeStringList([
-      ...normalizeStringArrayForActor(source.weapons, 6, 80),
+    weapons: dedupeItemRefList([
+      ...normalizeAiItemReferenceArray(source.weapons, 6, 80),
       ...groupedFlat.weapons
     ], 6),
-    armor: dedupeStringList([
-      ...normalizeStringArrayForActor(source.armor, 4, 80),
+    armor: dedupeItemRefList([
+      ...normalizeAiItemReferenceArray(source.armor, 4, 80),
       ...groupedFlat.armor
     ], 4),
-    equipment: dedupeStringList([
-      ...normalizeStringArrayForActor(source.equipment, 12, 80),
+    equipment: dedupeItemRefList([
+      ...normalizeAiItemReferenceArray(source.equipment, 12, 80),
       ...groupedFlat.equipment
     ], 12),
-    consumables: dedupeStringList([
-      ...normalizeStringArrayForActor(source.consumables, 8, 80),
+    consumables: dedupeItemRefList([
+      ...normalizeAiItemReferenceArray(source.consumables, 8, 80),
       ...groupedFlat.consumables
     ], 8),
-    loot: dedupeStringList([
-      ...normalizeStringArrayForActor(source.loot, 10, 80),
+    loot: dedupeItemRefList([
+      ...normalizeAiItemReferenceArray(source.loot, 10, 80),
       ...groupedFlat.loot
     ], 10),
     spells: dedupeStringList(normalizeStringArrayForActor(source.spells, 14, 80), 14),
@@ -722,6 +768,64 @@ function normalizeAiItemGroups(rawItems) {
   };
 }
 
+function normalizeAiItemReferenceArray(value, maxItems = 6, maxLength = 80) {
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : [];
+  const out = [];
+  for (const entry of list) {
+    const normalized = normalizeAiItemReference(entry, maxLength);
+    if (!normalized) continue;
+    out.push(normalized);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+function normalizeAiItemReference(value, maxLength = 80) {
+  if (typeof value === "string") {
+    const name = String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+    if (!name) return null;
+    return { name, lookup: "" };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const name = String(value.name || value.label || value.value || value.item || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+  const lookup = String(value.lookup || value.canonical || value.canonicalName || value.english || value.en || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+  const resolvedName = name || lookup;
+  if (!resolvedName) return null;
+  return {
+    name: resolvedName,
+    lookup
+  };
+}
+
+function dedupeItemRefList(values, maxItems = 10) {
+  const out = [];
+  const seen = new Set();
+  for (const rawValue of values || []) {
+    const value = normalizeAiItemReference(rawValue, 120);
+    if (!value) continue;
+    const key = `${value.name.toLowerCase()}|${String(value.lookup || "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
 function normalizeStringArrayForActor(value, maxItems = 6, maxLength = 80, fallback = []) {
   const list = Array.isArray(value)
     ? value
@@ -730,7 +834,13 @@ function normalizeStringArrayForActor(value, maxItems = 6, maxLength = 80, fallb
       .map((part) => part.trim())
       .filter(Boolean);
   const clean = list
-    .map((part) => String(part || "").replace(/\s+/g, " ").trim().slice(0, maxLength))
+    .map((part) => {
+      const raw =
+        part && typeof part === "object" && !Array.isArray(part)
+          ? part.name || part.lookup || part.value || part.label || ""
+          : part;
+      return String(raw || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+    })
     .filter(Boolean)
     .slice(0, maxItems);
   if (clean.length) return clean;
@@ -831,6 +941,214 @@ function uniquePackNames(packs) {
   return Array.from(new Set((packs || []).filter(Boolean)));
 }
 
+function buildLookupNameCandidates(names) {
+  const seeds = Array.isArray(names) ? names : [names];
+  const variants = new Set();
+  for (const seed of seeds) {
+    const base = String(seed || "").replace(/\s+/g, " ").trim();
+    if (!base) continue;
+    variants.add(base);
+    for (const extra of expandLookupNameVariants(base)) {
+      const normalized = String(extra || "").replace(/\s+/g, " ").trim();
+      if (!normalized) continue;
+      variants.add(normalized);
+    }
+    for (const value of getSearchStrings({ name: base })) {
+      const clean = String(value || "").replace(/\s+/g, " ").trim();
+      if (!clean) continue;
+      variants.add(clean);
+    }
+  }
+  return Array.from(variants).sort((a, b) => b.length - a.length);
+}
+
+function pickBestCachedAiItemByKeywords(referenceNames, packs, allowedTypes, keywords, budget) {
+  const docs = getCachedDocsForPacks(packs);
+  if (!docs.length || !keywords.length) return null;
+
+  const names = (Array.isArray(referenceNames) ? referenceNames : [referenceNames])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const targetTokens = new Set(names.flatMap((name) => getSearchStrings({ name })));
+  const expandedKeywords = Array.from(
+    new Set(
+      keywords
+        .flatMap((keyword) => getSearchStrings({ name: keyword }))
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (!expandedKeywords.length) return null;
+
+  const requiredMatches = expandedKeywords.length >= 2 ? 2 : 1;
+  let best = null;
+
+  for (const doc of docs) {
+    const type = String(doc?.type || "").toLowerCase();
+    if (!allowedTypes.includes(type)) continue;
+
+    const haystack = getSearchStrings(doc);
+    if (!haystack.length) continue;
+
+    let matchCount = 0;
+    for (const keyword of expandedKeywords) {
+      if (haystack.some((token) => token.includes(keyword))) matchCount += 1;
+    }
+    if (matchCount < requiredMatches) continue;
+
+    const exactNameToken = haystack.some((token) => targetTokens.has(token));
+    const withinBudget = isWithinBudget(doc, budget, true);
+    const score = (exactNameToken ? 100 : 0) + matchCount * 10 + (withinBudget ? 1 : 0);
+    const tieBreaker = names.length
+      ? Math.min(...names.map((name) => Math.abs(String(doc?.name || "").length - name.length)))
+      : Math.abs(String(doc?.name || "").length);
+
+    if (
+      !best ||
+      score > best.score ||
+      (score === best.score && withinBudget && !best.withinBudget) ||
+      (score === best.score && withinBudget === best.withinBudget && tieBreaker < best.tieBreaker)
+    ) {
+      best = { doc, score, withinBudget, tieBreaker };
+    }
+  }
+
+  return best?.doc || null;
+}
+
+function pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget) {
+  const docs = getCachedDocsForPacks(packs);
+  if (!docs.length) return null;
+
+  const localizedSeeds = buildLookupNameCandidates(itemRef?.name || "");
+  const lookupSeeds = buildLookupNameCandidates(itemRef?.lookup || itemRef?.name || "");
+  const combined = Array.from(new Set([...localizedSeeds, ...lookupSeeds]));
+  if (!combined.length) return null;
+
+  const preferredScript =
+    detectPreferredScriptByLanguage() ||
+    detectTextScript(itemRef?.name);
+
+  let best = null;
+  for (const doc of docs) {
+    const type = String(doc?.type || "").toLowerCase();
+    if (!allowedTypes.includes(type)) continue;
+
+    const haystack = getSearchStrings(doc);
+    if (!haystack.length) continue;
+    const haystackWordSet = buildSearchWordSet(haystack);
+
+    let localizedExact = 0;
+    let lookupExact = 0;
+    let localizedPartial = 0;
+    let lookupPartial = 0;
+    for (const term of localizedSeeds) {
+      if (haystack.includes(term) || haystackWordSet.has(term)) localizedExact += 1;
+      if (haystack.some((token) => token.includes(term))) localizedPartial += 1;
+    }
+    for (const term of lookupSeeds) {
+      if (haystack.includes(term) || haystackWordSet.has(term)) lookupExact += 1;
+      if (haystack.some((token) => token.includes(term))) lookupPartial += 1;
+    }
+    if (!localizedPartial && !lookupPartial) continue;
+
+    const withinBudget = isWithinBudget(doc, budget, true);
+    const nameScript = detectTextScript(doc?.name);
+    const scriptBonus = preferredScript && preferredScript === nameScript ? 25 : 0;
+    const score =
+      localizedExact * 90 +
+      lookupExact * 70 +
+      localizedPartial * 15 +
+      lookupPartial * 12 +
+      scriptBonus +
+      (withinBudget ? 1 : 0);
+
+    const tieBreaker = Math.abs(String(doc?.name || "").length - String(itemRef?.name || "").length);
+    if (
+      !best ||
+      score > best.score ||
+      (score === best.score && withinBudget && !best.withinBudget) ||
+      (score === best.score && withinBudget === best.withinBudget && tieBreaker < best.tieBreaker)
+    ) {
+      best = { doc, score, withinBudget, tieBreaker };
+    }
+  }
+
+  return best?.doc || null;
+}
+
+function buildSearchWordSet(tokens) {
+  const out = new Set();
+  for (const token of tokens || []) {
+    const parts = String(token || "")
+      .toLowerCase()
+      .replace(/[^a-zа-яё0-9]+/gi, " ")
+      .split(/\s+/)
+      .map((part) => part.trim())
+      .filter((part) => part.length >= 3);
+    for (const part of parts) out.add(part);
+  }
+  return out;
+}
+
+function countKeywordHits(haystack, keywords) {
+  const terms = (keywords || []).map((value) => String(value || "").trim()).filter(Boolean);
+  if (!terms.length) return 0;
+  let hits = 0;
+  for (const term of terms) {
+    if ((haystack || []).some((token) => String(token || "").includes(term))) hits += 1;
+  }
+  return hits;
+}
+
+function isAmmoLikeItemRequest(value) {
+  const text = String(value || "").toLowerCase();
+  return /(crossbow bolts?|bolts?|arrows?|ammo|боеприпас|болт|болты|стрела|стрелы)/i.test(text);
+}
+
+function expandLookupNameVariants(base) {
+  const text = String(base || "").trim();
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  const out = [];
+
+  if (/(crossbow bolts?|болты(?:\s+для)?\s+арбалет|арбалетные\s+болты)/i.test(lower)) {
+    out.push(
+      "Crossbow Bolts",
+      "Crossbow Bolt",
+      "Crossbow Bolts (20)",
+      "Crossbow Bolt (20)",
+      "Bolts (20)",
+      "арбалетные болты",
+      "арбалетный болт",
+      "болты для арбалета"
+    );
+  }
+  if (/(arrows?|стрелы?|стрел)/i.test(lower)) {
+    out.push("Arrows", "Arrows (20)", "Arrow", "стрелы", "стрела");
+  }
+
+  return out;
+}
+
+function detectTextScript(value) {
+  const text = String(value || "");
+  if (/[а-яё]/i.test(text)) return "cyrillic";
+  if (/[a-z]/i.test(text)) return "latin";
+  return null;
+}
+
+function detectPreferredScriptByLanguage() {
+  const lang = String(game?.i18n?.lang || game?.settings?.get?.("core", "language") || "")
+    .trim()
+    .toLowerCase();
+  if (lang.startsWith("ru") || lang.startsWith("uk") || lang.startsWith("be")) {
+    return "cyrillic";
+  }
+  if (lang.startsWith("en")) return "latin";
+  return null;
+}
+
 function buildLookupKeywordsFromName(name) {
   const stopWords = new Set([
     "of",
@@ -865,34 +1183,59 @@ function splitFlatItemNamesForActor(itemNames) {
     loot: []
   };
 
-  for (const itemName of itemNames || []) {
-    const lower = String(itemName || "").toLowerCase();
+  for (const rawItem of itemNames || []) {
+    const itemRef = normalizeAiItemReference(rawItem, 100);
+    if (!itemRef) continue;
+    const label = String(itemRef.lookup || itemRef.name || "").trim();
+    const lower = label.toLowerCase();
     if (!lower) continue;
-    if (/(sword|axe|mace|hammer|bow|crossbow|dagger|spear|halberd|staff|rapier|whip|javelin|flail)/i.test(lower)) {
-      result.weapons.push(itemName);
+    if (
+      /(ammo|arrows?|bolts?|crossbow bolts?|боеприпас|стрел|болт|снаряд)/i.test(lower)
+    ) {
+      result.consumables.push(itemRef);
       continue;
     }
-    if (/(armor|mail|plate|shield|helm|gauntlet|breastplate|leather|chain)/i.test(lower)) {
-      result.armor.push(itemName);
+    if (
+      /(sword|axe|mace|hammer|bow|crossbow|dagger|spear|halberd|staff|rapier|whip|javelin|flail|меч|топор|булав|молот|лук|арбалет|кинжал|копь|алебард|посох|рапир|кнут|дротик)/i.test(
+        lower
+      )
+    ) {
+      result.weapons.push(itemRef);
       continue;
     }
-    if (/(potion|elixir|scroll|ammo|arrows|bolts|kit|healer|ration)/i.test(lower)) {
-      result.consumables.push(itemName);
+    if (
+      /(armor|mail|plate|shield|helm|gauntlet|breastplate|leather|chain|брон|доспех|кольчуг|латы|щит|шлем|панцир|кирас)/i.test(
+        lower
+      )
+    ) {
+      result.armor.push(itemRef);
       continue;
     }
-    if (/(gem|coin|ring|necklace|trinket|relic|idol|token)/i.test(lower)) {
-      result.loot.push(itemName);
+    if (
+      /(potion|elixir|scroll|ammo|arrows|bolts|healer|ration|зель|эликсир|свит|боеприпас|стрел|болт|аптеч|рацион|яд)/i.test(
+        lower
+      )
+    ) {
+      result.consumables.push(itemRef);
       continue;
     }
-    result.equipment.push(itemName);
+    if (
+      /(gem|coin|ring|necklace|trinket|relic|idol|token|самоцвет|монет|кольц|ожерел|безделуш|релик|идол|жетон|драгоцен)/i.test(
+        lower
+      )
+    ) {
+      result.loot.push(itemRef);
+      continue;
+    }
+    result.equipment.push(itemRef);
   }
 
   return {
-    weapons: dedupeStringList(result.weapons, 6),
-    armor: dedupeStringList(result.armor, 4),
-    equipment: dedupeStringList(result.equipment, 12),
-    consumables: dedupeStringList(result.consumables, 8),
-    loot: dedupeStringList(result.loot, 10)
+    weapons: dedupeItemRefList(result.weapons, 6),
+    armor: dedupeItemRefList(result.armor, 4),
+    equipment: dedupeItemRefList(result.equipment, 12),
+    consumables: dedupeItemRefList(result.consumables, 8),
+    loot: dedupeItemRefList(result.loot, 10)
   };
 }
 
@@ -1389,7 +1732,7 @@ export async function getCantripCandidates(keywords) {
     }
   }
 
-  return matches.length ? matches : fallback;
+  return preferLocalizedNamedEntries(matches.length ? matches : fallback);
 }
 
 /**
@@ -1421,7 +1764,7 @@ export async function getSpellCandidates(maxLevel, keywords) {
     }
   }
 
-  return matches.length ? matches : fallback;
+  return preferLocalizedNamedEntries(matches.length ? matches : fallback);
 }
 
 /**
@@ -1470,8 +1813,26 @@ export function buildCachedSpellItemsFallback(maxLevel, keywords, count) {
     ? pool.filter((doc) => normalized.some((k) => getSearchStrings(doc).some((h) => h.includes(k))))
     : pool;
 
-  const picked = pickRandomN(matches.length ? matches : pool, count);
+  const preferredPool = preferLocalizedNamedEntries(matches.length ? matches : pool);
+  const picked = pickRandomN(preferredPool.length ? preferredPool : pool, count);
   return picked.map((doc) => cloneItemData(doc));
+}
+
+function preferLocalizedNamedEntries(entries) {
+  const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+  if (!list.length) return [];
+
+  const preferredScript = detectPreferredScriptByLanguage();
+  if (!preferredScript) return list;
+
+  const preferred = list.filter((entry) => detectTextScript(entry?.name) === preferredScript);
+  if (preferred.length) return preferred;
+
+  if (preferredScript !== "latin") {
+    const latin = list.filter((entry) => detectTextScript(entry?.name) === "latin");
+    if (latin.length) return latin;
+  }
+  return list;
 }
 
 /**

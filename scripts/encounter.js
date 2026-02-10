@@ -3,6 +3,42 @@
  * @module encounter
  */
 
+import { MODULE_ID } from "./constants.js";
+
+const SHOP_TYPE_FOLDER_LABEL_KEYS = {
+  market: "ui.shop.folderTypeMarket",
+  general: "ui.shop.folderTypeGeneral",
+  alchemy: "ui.shop.folderTypeAlchemy",
+  scrolls: "ui.shop.folderTypeScrolls",
+  weapons: "ui.shop.folderTypeWeapons",
+  armor: "ui.shop.folderTypeArmor",
+  food: "ui.shop.folderTypeFood"
+};
+
+function localizeModuleKey(key, fallback = "") {
+  const fullKey = `${MODULE_ID}.${String(key || "").trim()}`;
+  const localized = game.i18n?.localize?.(fullKey);
+  if (localized && localized !== fullKey) return localized;
+  return String(fallback || "").trim() || String(key || "").trim();
+}
+
+function sanitizeFolderSegment(input, fallback = "shop") {
+  const base = String(input || "").trim();
+  if (!base) return fallback;
+  let safe = base.replace(/\s+/g, "-");
+  try {
+    safe = safe.replace(/[^\p{L}\p{N}_-]+/gu, "-");
+  } catch {
+    safe = safe.replace(/[^a-z0-9а-яё_-]+/gi, "-");
+  }
+  safe = safe.replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 32);
+  return safe || fallback;
+}
+
+function escapeRegExp(input) {
+  return String(input || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Get tier for a character level
  * @param {number} level - Character level (1-20)
@@ -125,6 +161,41 @@ export async function ensureEncounterFolder() {
   let next = 1;
   while (used.has(next)) next += 1;
   const name = `Encounter-${next}`;
+  try {
+    const created = await Folder.create({ name, type: "Actor" });
+    return created?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ensure a shop folder exists, creating one if needed
+ * @param {string} [shopType] - Shop type key for folder naming
+ * @returns {Promise<string|null>} Folder ID or null
+ */
+export async function ensureShopFolder(shopType = "shop") {
+  if (!game.user?.isGM || typeof Folder?.create !== "function") return null;
+  const folders = (game.folders || []).filter((folder) => folder.type === "Actor");
+  const normalizedType = String(shopType || "shop").trim().toLowerCase();
+  const typeLabelKey = SHOP_TYPE_FOLDER_LABEL_KEYS[normalizedType];
+  const localizedType = typeLabelKey
+    ? localizeModuleKey(typeLabelKey, normalizedType)
+    : normalizedType;
+  const localizedPrefix = localizeModuleKey("ui.shop.folderPrefix", "Shop");
+
+  const safePrefix = sanitizeFolderSegment(localizedPrefix, "Shop");
+  const safeType = sanitizeFolderSegment(localizedType, "shop");
+
+  let next = 1;
+  const re = new RegExp(`^${escapeRegExp(safePrefix)}-${escapeRegExp(safeType)}-(\\d+)$`, "i");
+  for (const folder of folders) {
+    const match = String(folder.name || "").match(re);
+    if (!match) continue;
+    const id = Number(match[1]);
+    if (Number.isFinite(id) && id >= next) next = id + 1;
+  }
+  const name = `${safePrefix}-${safeType}-${next}`;
   try {
     const created = await Folder.create({ name, type: "Actor" });
     return created?.id || null;

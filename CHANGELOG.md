@@ -1,7 +1,14 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Shop import workflow polish and AI panel cleanup.
+
+## 0.9.0
+- Add full Shop mode workflow (shopkeeper actor, localized folders, category/budget controls).
+- Add Shop AI tools under `Use AI`: prompt + direct JSON import.
+- Improve shop import: creates shop immediately and uses only imported items (no extra auto-generated stock).
+- Improve compendium matching and localization behavior for imported items/spells (with English fallback).
+- Polish dialog UX and option persistence across generator modes.
 
 ## 0.5.6
 - Rework NPC generator dialog UI (cleaner layout, better contrast/readability, improved AI controls).

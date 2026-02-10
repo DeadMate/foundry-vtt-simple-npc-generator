@@ -27,7 +27,7 @@ jobs:
           fi
           CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" 2>/dev/null || echo "scripts/")
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -E "^(module\\.json|scripts/|data/|assets/|templates/)" >/dev/null; then
+          if echo "$CHANGED" | grep -E "^(module\\.json|scripts/|data/|assets/|templates/|lang/)" >/dev/null; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -115,7 +115,7 @@ jobs:
       - name: Create module.zip
         if: steps.changes.outputs.changed == 'true'
         run: |
-          zip -r module.zip module.json README.md scripts templates assets data CHANGELOG.md -x "data/compendium-cache.json"
+          zip -r module.zip module.json README.md scripts templates assets data lang CHANGELOG.md -x "data/compendium-cache.json"
 
       - name: Create GitHub Release
         if: steps.changes.outputs.changed == 'true'

@@ -6,7 +6,9 @@
 import { MODULE_ID } from "./constants.js";
 import { DATA_CACHE, loadData } from "./data-loader.js";
 import { buildCompendiumCache } from "./cache.js";
-import { capitalize, pickRandom, shuffleArray, escapeHtml } from "./utils.js";
+import { t, tf } from "./i18n.js";
+import { buildNpcDialogContent } from "./ui-dialog-template.js";
+import { capitalize, pickRandom, shuffleArray, escapeHtml, randInt, toItemData, getItemPriceValue } from "./utils.js";
 import {
   getSpeciesEntries,
   getSpeciesOptions,
@@ -18,9 +20,17 @@ import {
   getAutoTier,
   buildEncounterCount,
   buildEncounterPlan,
-  ensureEncounterFolder
+  ensureEncounterFolder,
+  ensureShopFolder
 } from "./encounter.js";
 import { generateNpc, buildActorData, buildActorDataFromAiBlueprint, getClassForArchetype } from "./npc-generator.js";
+import {
+  getPacks,
+  cloneItemData,
+  isAllowedItemDoc,
+  isWithinBudget,
+  getBudgetRange
+} from "./items.js";
 import {
   isOpenAiConfigured,
   getOpenAiMaxBatch,
@@ -31,6 +41,33 @@ import {
   generateNpcTokenImageWithOpenAi,
   openOpenAiApiKeyDialog
 } from "./openai.js";
+
+function i18nText(key, fallback = "") {
+  return t(key, fallback);
+}
+
+function i18nFormat(key, data = {}, fallback = "") {
+  return tf(key, data, fallback);
+}
+
+function i18nHtml(key, fallback = "") {
+  return escapeHtml(i18nText(key, fallback));
+}
+
+function i18nHtmlFormat(key, data = {}, fallback = "") {
+  return escapeHtml(i18nFormat(key, data, fallback));
+}
+
+const BUDGET_OPTIONS = new Set(["poor", "normal", "well", "elite"]);
+const SHOP_TYPES = new Set(["market", "general", "alchemy", "scrolls", "weapons", "armor", "food"]);
+const SHOP_TYPE_WEIGHTS = [
+  { type: "general", weight: 4 },
+  { type: "food", weight: 3 },
+  { type: "alchemy", weight: 2 },
+  { type: "weapons", weight: 2 },
+  { type: "armor", weight: 2 },
+  { type: "scrolls", weight: 1 }
+];
 
 /**
  * Get actor folder options as HTML
@@ -188,7 +225,7 @@ export async function showChangelogIfUpdated() {
 
   const content = `
     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-      <div style="font-weight: 600;">What's new in v${escapeHtml(version)}</div>
+      <div style="font-weight: 600;">${i18nHtmlFormat("ui.changelog.whatsNew", { version })}</div>
       <ul style="margin: 0; padding-left: 1.25rem;">
         ${notes.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
       </ul>
@@ -196,11 +233,11 @@ export async function showChangelogIfUpdated() {
   `;
 
   new Dialog({
-    title: "NPC Button updated",
+    title: i18nText("ui.changelog.title"),
     content,
     buttons: {
       dismiss: {
-        label: "Don't show until next update",
+        label: i18nText("ui.changelog.dismissUntilNextUpdate"),
         callback: () => {
           game.settings?.set(MODULE_ID, "lastSeenVersion", version);
         }
@@ -270,7 +307,7 @@ export function addNpcButton(html) {
 
   const button = $(
     `<button type="button" class="create-entity" data-${MODULE_ID}="create">
-      <i class="fas fa-user-plus"></i> NPC Button
+      <i class="fas fa-user-plus"></i> ${i18nHtml("ui.sidebarButton.label")}
     </button>`
   );
 
@@ -296,7 +333,7 @@ export function addNpcButton(html) {
  */
 export async function openNpcDialog() {
   if (game.system?.id !== "dnd5e") {
-    ui.notifications?.error("NPC Button requires the D&D 5e system.");
+    ui.notifications?.error(i18nText("ui.errorRequiresDnd5e"));
     return;
   }
 
@@ -305,7 +342,7 @@ export async function openNpcDialog() {
 
     const archetypes = DATA_CACHE.archetypes;
     if (!DATA_CACHE.speciesEntries?.length) {
-      ui.notifications?.warn("NPC Button: No species compendium entries found.");
+      ui.notifications?.warn(i18nText("ui.warnNoSpeciesCompendiumEntries"));
     }
     const options = archetypes
       .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`)
@@ -317,390 +354,31 @@ export async function openNpcDialog() {
     const lastOptions = getLastNpcOptions();
     const aiReady = isOpenAiConfigured();
     const speciesEntries = Array.isArray(DATA_CACHE.speciesEntries) ? DATA_CACHE.speciesEntries : [];
+    const cultureOptions = Object.keys(DATA_CACHE.names?.cultures || {})
+      .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(capitalize(k))}</option>`)
+      .join("");
 
-  const content = `
-    <style>
-      .npc-btn-form { display: flex; flex-direction: column; gap: 0.75rem; }
-      .npc-btn-shell {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        padding: 0.8rem;
-        border-radius: 14px;
-        color: #edf2ff;
-        background: linear-gradient(165deg, rgba(25, 31, 45, 0.98), rgba(14, 18, 29, 0.98));
-        border: 1px solid rgba(129, 156, 219, 0.45);
-      }
-      .npc-btn-shell,
-      .npc-btn-shell label,
-      .npc-btn-shell span,
-      .npc-btn-shell p,
-      .npc-btn-shell h3,
-      .npc-btn-shell strong,
-      .npc-btn-shell small { color: #edf2ff; }
-      .npc-btn-hero {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.65rem 0.75rem;
-        border-radius: 10px;
-        background: rgba(73, 104, 171, 0.18);
-        border: 1px solid rgba(125, 162, 236, 0.55);
-      }
-      .npc-btn-hero strong { font-size: 1rem; letter-spacing: 0.02em; color: #ffffff; }
-      .npc-btn-hero small { display: block; opacity: 0.95; margin-top: 0.1rem; color: #dbe7ff; }
-      .npc-btn-badge {
-        font-size: 0.73rem;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        font-weight: 700;
-        padding: 0.28rem 0.55rem;
-        border-radius: 999px;
-        color: #f7fbff;
-        background: rgba(78, 155, 255, 0.46);
-        border: 1px solid rgba(162, 208, 255, 0.95);
-      }
-      .npc-btn-tabs {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.4rem;
-      }
-      .npc-btn-tabs button {
-        border-radius: 10px;
-        margin: 0;
-        padding: 0.45rem 0.7rem;
-        font-weight: 600;
-        color: #e3ebff;
-        border: 1px solid #5f6e97;
-        background: linear-gradient(180deg, #2c3854, #212b42);
-      }
-      .npc-btn-tabs button.active {
-        color: #ffffff;
-        background: linear-gradient(180deg, #488ff0, #316cc2);
-        border-color: #a8cbff;
-      }
-      .npc-btn-shell button {
-        color: #f2f7ff;
-        border: 1px solid #60719d;
-        background: linear-gradient(180deg, #31405f, #27324d);
-        text-shadow: none;
-      }
-      .npc-btn-shell button:hover {
-        border-color: #92b8ff;
-        background: linear-gradient(180deg, #3a4d74, #2f4063);
-      }
-      .npc-btn-shell button:disabled {
-        opacity: 0.6;
-        color: #b5bfd8;
-      }
-      .npc-btn-panel { display: flex; flex-direction: column; gap: 0.75rem; }
-      .npc-btn-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.6rem;
-      }
-      .npc-btn-card {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        padding: 0.65rem;
-        border-radius: 10px;
-        border: 1px solid rgba(123, 149, 206, 0.5);
-        background: rgba(49, 64, 95, 0.32);
-      }
-      .npc-btn-card h3 {
-        margin: 0;
-        font-size: 0.82rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #d8e5ff;
-      }
-      .npc-btn-span-2 { grid-column: 1 / -1; }
-      .npc-btn-field { display: flex; flex-direction: column; gap: 0.25rem; }
-      .npc-btn-field > span { font-size: 0.78rem; opacity: 0.88; }
-      .npc-btn-row { display: flex; gap: 0.45rem; align-items: center; }
-      .npc-btn-row > * { flex: 1; }
-      .npc-btn-row .npc-btn-roll { flex: 0 0 auto; width: 2.2rem; padding: 0; }
-      .npc-btn-row .npc-btn-stepper { flex: 0 0 auto; width: 2rem; padding: 0; }
-      .npc-btn-field select,
-      .npc-btn-field input[type="text"],
-      .npc-btn-field input[type="number"] {
-        width: 100%;
-        color: #f3f7ff;
-        border-radius: 8px;
-        border: 1px solid #6073a5;
-        background: #11192b;
-      }
-      .npc-btn-field select option,
-      .npc-btn-field select optgroup {
-        color: #172033;
-        background: #f5f8ff;
-      }
-      .npc-btn-field select:focus,
-      .npc-btn-field input[type="text"]:focus,
-      .npc-btn-field input[type="number"]:focus {
-        outline: none;
-        border-color: #9fc1ff;
-        box-shadow: 0 0 0 1px rgba(160, 193, 255, 0.35);
-      }
-      .npc-btn-checks {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.35rem 0.6rem;
-      }
-      .npc-btn-note {
-        margin: 0;
-        font-size: 0.78rem;
-        line-height: 1.3;
-        color: #c9d8f6;
-      }
-      .npc-btn-shell .checkbox { color: #edf2ff; }
-      .npc-btn-ai-group { gap: 0.6rem; }
-      .npc-btn-ai-top {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.75rem;
-      }
-      .npc-btn-ai-top h3 { margin: 0; font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.04em; }
-      .npc-btn-ai-controls { display: none; flex-direction: column; align-items: stretch; gap: 0.5rem; }
-      .npc-btn-ai-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
-      .npc-btn-ai-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem 0.6rem; }
-      .npc-btn-dialog-buttons { display: flex !important; gap: 0.4rem; }
-      .npc-btn-dialog-buttons .dialog-button {
-        margin: 0;
-        width: 100%;
-        flex: 1 1 0;
-        white-space: nowrap;
-        color: #ffffff;
-        border: 1px solid #7ca7f5;
-        background: linear-gradient(180deg, #3f76d6, #2f5fb5);
-      }
-      .npc-btn-dialog-buttons .dialog-button:hover {
-        border-color: #b4d0ff;
-        background: linear-gradient(180deg, #4a87ef, #386ecf);
-      }
-      @media (max-width: 700px) {
-        .npc-btn-grid,
-        .npc-btn-checks,
-        .npc-btn-ai-actions,
-        .npc-btn-ai-options { grid-template-columns: 1fr; }
-      }
-    </style>
-    <form class="npc-btn-form">
-      <input type="hidden" name="encounterMode" value="main">
-      <div class="npc-btn-shell">
-        <div class="npc-btn-hero">
-          <div>
-            <strong>NPC Generator</strong>
-            <small>Fast setup for single NPCs and full encounters.</small>
-          </div>
-          <span class="npc-btn-badge">D&D 5e</span>
-        </div>
-
-        <div class="npc-btn-tabs">
-          <button type="button" data-tab="main" class="active">Main NPC</button>
-          <button type="button" data-tab="encounter">Encounter</button>
-        </div>
-
-        <div data-tab-panel="main" class="npc-btn-panel">
-          <div class="npc-btn-grid">
-            <section class="npc-btn-card">
-              <h3>Core Setup</h3>
-              <label class="npc-btn-field">
-                <span>Archetype</span>
-                <div class="npc-btn-row">
-                  <select name="archetype">
-                    <option value="random">Random</option>
-                    ${options}
-                  </select>
-                  <button type="button" class="npc-btn-roll" data-action="roll-archetype" title="Pick a random archetype">🎲</button>
-                </div>
-              </label>
-              <label class="npc-btn-field">
-                <span>Difficulty (Tier)</span>
-                <select name="tier">
-                  <option value="auto">Auto (party level)</option>
-                  <option value="1">T1 (CR 1/8 - 1/2)</option>
-                  <option value="2">T2 (CR 1 - 3)</option>
-                  <option value="3">T3 (CR 4 - 6)</option>
-                  <option value="4">T4 (CR 7 - 10)</option>
-                </select>
-              </label>
-              <label class="npc-btn-field">
-                <span>Budget</span>
-                <select name="budget">
-                  <option value="poor">Poor</option>
-                  <option value="normal" selected>Normal</option>
-                  <option value="well">Well-Off</option>
-                  <option value="elite">Elite</option>
-                </select>
-              </label>
-            </section>
-
-            <section class="npc-btn-card">
-              <h3>Identity</h3>
-              <label class="npc-btn-field">
-                <span>Culture</span>
-                <select name="culture">
-                  <option value="random">Random</option>
-                  ${Object.keys(DATA_CACHE.names?.cultures || {})
-                    .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(capitalize(k))}</option>`)
-                    .join("")}
-                </select>
-              </label>
-              <label class="npc-btn-field">
-                <span>Gender</span>
-                <select name="gender">
-                  <option value="random">Random</option>
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                </select>
-              </label>
-              <label class="npc-btn-field">
-                <span>Race</span>
-                <input type="text" name="speciesSearch" placeholder="Search race..." />
-                <select name="species">
-                  <option value="random">Random</option>
-                  ${speciesOptions}
-                </select>
-              </label>
-            </section>
-
-            <section class="npc-btn-card">
-              <h3>Output</h3>
-              <label class="npc-btn-field">
-                <span>Count</span>
-                <div class="npc-btn-row">
-                  <button type="button" class="npc-btn-stepper" data-npc-count="minus">-</button>
-                  <input type="number" name="count" value="1" min="1" max="50" style="text-align: center;">
-                  <button type="button" class="npc-btn-stepper" data-npc-count="plus">+</button>
-                </div>
-              </label>
-              <label class="npc-btn-field">
-                <span>Folder</span>
-                <select name="folder">
-                  <option value="">None</option>
-                  ${folderOptions}
-                </select>
-              </label>
-            </section>
-
-            <section class="npc-btn-card">
-              <h3>Add-ons</h3>
-              <div class="npc-btn-checks">
-                <label class="checkbox"><input type="checkbox" name="includeLoot" checked> Loot</label>
-                <label class="checkbox"><input type="checkbox" name="includeSecret" checked> Secret</label>
-                <label class="checkbox"><input type="checkbox" name="includeHook" checked> Quest hook</label>
-                <label class="checkbox"><input type="checkbox" name="importantNpc"> Boss</label>
-              </div>
-              <p class="npc-btn-note">Use Boss for stronger stat budget and encounter presence.</p>
-            </section>
-          </div>
-        </div>
-
-        <div data-tab-panel="encounter" class="npc-btn-panel" style="display: none;">
-          <div class="npc-btn-grid">
-            <section class="npc-btn-card">
-              <h3>Encounter Template</h3>
-              <label class="npc-btn-field">
-                <span>Encounter race</span>
-                <input type="text" name="encounterSpeciesSearch" placeholder="Search race..." />
-                <select name="encounterSpecies">
-                  <option value="random">Random</option>
-                  ${speciesOptions}
-                </select>
-              </label>
-              <label class="npc-btn-field">
-                <span>Encounter archetype</span>
-                <select name="encounterArchetype">
-                  <option value="random">Random</option>
-                  ${options}
-                </select>
-              </label>
-            </section>
-
-            <section class="npc-btn-card">
-              <h3>Party Balance</h3>
-              <div class="npc-btn-row">
-                <label class="npc-btn-field">
-                  <span>Party level</span>
-                  <input type="number" name="partyLevel" value="3" min="1" max="20">
-                </label>
-                <label class="npc-btn-field">
-                  <span>Party size</span>
-                  <input type="number" name="partySize" value="4" min="1" max="8">
-                </label>
-              </div>
-              <label class="npc-btn-field">
-                <span>Difficulty</span>
-                <select name="encounterDifficulty">
-                  <option value="easy">Easy</option>
-                  <option value="medium" selected>Medium</option>
-                  <option value="hard">Hard</option>
-                  <option value="deadly">Deadly</option>
-                </select>
-              </label>
-              <p class="npc-btn-note">Count auto-adjusts from party setup and difficulty.</p>
-            </section>
-
-            <section class="npc-btn-card npc-btn-span-2">
-              <h3>Encounter Notes</h3>
-              <p class="npc-btn-note">
-                Encounter generation places actors in the next <strong>Encounter-N</strong> folder and balances tiers automatically.
-              </p>
-            </section>
-          </div>
-        </div>
-
-        <section class="npc-btn-card npc-btn-ai-group">
-          <div class="npc-btn-ai-top">
-            <h3>AI Tools</h3>
-            <label class="checkbox"><input type="checkbox" name="useAi"> Use AI (OpenAI)</label>
-          </div>
-          <div class="npc-btn-ai-controls" data-ai-controls>
-            <div class="npc-btn-ai-actions">
-              <button type="button" data-action="open-ai-key">Set API Key</button>
-              <button type="button" data-action="copy-ai-prompt">Copy Prompt</button>
-              <button type="button" data-action="import-ai-json">Import JSON</button>
-            </div>
-            <div class="npc-btn-ai-options">
-              <label class="checkbox">
-                <input type="checkbox" name="includeAiFlavor" ${aiReady ? "" : "disabled"}>
-                AI flavor text
-              </label>
-              <label class="checkbox">
-                <input type="checkbox" name="includeAiToken" ${aiReady ? "" : "disabled"}>
-                AI token image
-              </label>
-            </div>
-            <p class="npc-btn-note">
-              ${aiReady
-                ? "OpenAI key is configured for this GM client."
-                : "Set your OpenAI API key in Module Settings (Set API Key menu)."}
-            </p>
-            <p class="npc-btn-note">
-              <strong>Create AI NPC</strong> builds full NPCs (stats + gear + spells/features via compendium lookup).
-            </p>
-          </div>
-        </section>
-      </div>
-    </form>
-  `;
+    const content = buildNpcDialogContent({
+      archetypeOptionsHtml: options,
+      cultureOptionsHtml: cultureOptions,
+      folderOptionsHtml: folderOptions,
+      speciesOptionsHtml: speciesOptions,
+      aiReady,
+      i18nHtml
+    });
 
     new Dialog({
-    title: "NPC Button (D&D 5e)",
-    content,
-    buttons: {
+      title: i18nText("ui.dialog.title"),
+      content,
+      buttons: {
       cache: {
-        label: "Build Cache",
+        label: i18nText("ui.dialog.buttonBuildCache"),
         callback: async () => {
           await buildCompendiumCache();
         }
       },
       create: {
-        label: "Create NPC",
+        label: i18nText("ui.dialog.buttonCreateNpc"),
         callback: async (html) => {
           const form = html.find("form")[0];
           const formData = new FormData(form);
@@ -708,37 +386,45 @@ export async function openNpcDialog() {
         }
       },
       createAi: {
-        label: "Create AI NPC",
+        label: i18nText("ui.dialog.buttonCreateAiNpc"),
         callback: async (html) => {
           const form = html.find("form")[0];
           const formData = new FormData(form);
           await createNpcFromForm(formData, { aiFull: true });
         }
       },
-      cancel: { label: "Cancel" }
-    },
-    default: "create",
-    render: (html) => {
+      cancel: { label: i18nText("common.cancel") }
+      },
+      default: "create",
+      render: (html) => {
       const form = html.find("form");
       const tabButtons = form.find("[data-tab]");
       const tabPanels = form.find("[data-tab-panel]");
       const encounterModeInput = form.find("input[name='encounterMode']");
       const createButton = html.find("button[data-button='create']");
       const createAiButton = html.find("button[data-button='createAi']");
+      const aiSection = form.find("[data-ai-section]");
       const dialogButtons = html.closest(".dialog").find(".dialog-buttons");
       dialogButtons.addClass("npc-btn-dialog-buttons");
       createAiButton.hide();
       const updateCreateLabel = () => {
-        if (encounterModeInput.val() === "encounter") {
-          createButton.text("Create Encounter");
-          createAiButton.text("Create AI Encounter");
-        } else {
-          createButton.text("Create NPC");
-          createAiButton.text("Create AI NPC");
+        const mode = String(encounterModeInput.val() || "main");
+        if (mode === "encounter") {
+          createButton.text(i18nText("ui.dialog.buttonCreateEncounter"));
+          createAiButton.text(i18nText("ui.dialog.buttonCreateAiEncounter"));
+          return;
         }
+        if (mode === "shop") {
+          createButton.text(i18nText("ui.dialog.buttonCreateShop"));
+          createAiButton.text(i18nText("ui.dialog.buttonCreateAiNpc"));
+          return;
+        }
+        createButton.text(i18nText("ui.dialog.buttonCreateNpc"));
+        createAiButton.text(i18nText("ui.dialog.buttonCreateAiNpc"));
       };
       if (lastFolder) {
         form.find("select[name='folder']").val(lastFolder);
+        form.find("select[name='shopFolder']").val(lastFolder);
       }
       if (lastSpeciesKey) {
         form.find("select[name='species']").val(lastSpeciesKey);
@@ -760,6 +446,15 @@ export async function openNpcDialog() {
         if (lastOptions.count) form.find("input[name='count']").val(Number(lastOptions.count));
         if (lastOptions.encounterDifficulty) {
           form.find("select[name='encounterDifficulty']").val(String(lastOptions.encounterDifficulty));
+        }
+        if (lastOptions.shopType) form.find("select[name='shopType']").val(String(lastOptions.shopType));
+        if (lastOptions.shopCount) form.find("input[name='shopCount']").val(Number(lastOptions.shopCount));
+        if (lastOptions.shopBudget) form.find("select[name='shopBudget']").val(String(lastOptions.shopBudget));
+        if (lastOptions.shopName) form.find("input[name='shopName']").val(String(lastOptions.shopName));
+        if (lastOptions.shopkeeperTier) form.find("select[name='shopkeeperTier']").val(String(lastOptions.shopkeeperTier));
+        if (lastOptions.shopFolder) form.find("select[name='shopFolder']").val(String(lastOptions.shopFolder));
+        if (typeof lastOptions.shopAllowMagic === "boolean") {
+          form.find("input[name='shopAllowMagic']").prop("checked", lastOptions.shopAllowMagic);
         }
         if (typeof lastOptions.includeLoot === "boolean") {
           form.find("input[name='includeLoot']").prop("checked", lastOptions.includeLoot);
@@ -788,6 +483,16 @@ export async function openNpcDialog() {
         if (typeof lastOptions.includeAiToken === "boolean") {
           form.find("input[name='includeAiToken']").prop("checked", lastOptions.includeAiToken && aiReady);
         }
+        if (lastOptions.encounterMode) {
+          const mode = String(lastOptions.encounterMode);
+          if (["main", "encounter", "shop"].includes(mode)) {
+            tabButtons.removeClass("active");
+            form.find(`[data-tab='${mode}']`).addClass("active");
+            tabPanels.hide();
+            form.find(`[data-tab-panel='${mode}']`).show();
+            encounterModeInput.val(mode);
+          }
+        }
       }
       const speciesSearch = form.find("input[name='speciesSearch']");
       const speciesSelect = form.find("select[name='species']");
@@ -798,8 +503,13 @@ export async function openNpcDialog() {
       const archetypeSelect = form.find("select[name='archetype']");
       const useAiToggle = form.find("input[name='useAi']");
       const aiControls = form.find("[data-ai-controls]");
+      const aiNpcActions = form.find("[data-ai-npc-actions]");
+      const aiShopActions = form.find("[data-ai-shop-actions]");
+      const aiNpcOptions = form.find("[data-ai-npc-options]");
+      const aiNpcNotes = form.find("[data-ai-npc-note]");
       const includeAiFlavorInput = form.find("input[name='includeAiFlavor']");
       const includeAiTokenInput = form.find("input[name='includeAiToken']");
+      const shopImportPayloadInput = form.find("input[name='shopImportPayload']");
       const readChecked = (name) => !!form.find(`input[name='${name}']`).prop("checked");
       const collectDialogOptions = () => ({
         tier: String(form.find("select[name='tier']").val() || "auto"),
@@ -814,6 +524,13 @@ export async function openNpcDialog() {
         partySize: Math.max(1, Math.min(8, Number(form.find("input[name='partySize']").val()) || 4)),
         encounterDifficulty: String(form.find("select[name='encounterDifficulty']").val() || "medium"),
         encounterMode: String(encounterModeInput.val() || "main"),
+        shopType: String(form.find("select[name='shopType']").val() || "market"),
+        shopCount: Math.max(1, Math.min(60, Number(form.find("input[name='shopCount']").val()) || 12)),
+        shopBudget: String(form.find("select[name='shopBudget']").val() || "normal"),
+        shopName: String(form.find("input[name='shopName']").val() || "").trim(),
+        shopkeeperTier: Math.max(1, Math.min(4, Number(form.find("select[name='shopkeeperTier']").val()) || 1)),
+        shopFolder: String(form.find("select[name='shopFolder']").val() || ""),
+        shopAllowMagic: readChecked("shopAllowMagic"),
         useAi: !!useAiToggle.prop("checked"),
         includeLoot: readChecked("includeLoot"),
         includeSecret: readChecked("includeSecret"),
@@ -824,7 +541,11 @@ export async function openNpcDialog() {
       });
       const persistDialogOptions = () => {
         setLastNpcOptions(collectDialogOptions());
-        setLastFolderId(String(form.find("select[name='folder']").val() || ""));
+        const activeMode = String(encounterModeInput.val() || "main");
+        const selectedFolder = activeMode === "shop"
+          ? String(form.find("select[name='shopFolder']").val() || "")
+          : String(form.find("select[name='folder']").val() || "");
+        setLastFolderId(selectedFolder);
         const selectedSpecies = String(speciesSelect.val() || "random");
         setLastSpeciesKey(selectedSpecies !== "random" ? selectedSpecies : "");
       };
@@ -837,6 +558,7 @@ export async function openNpcDialog() {
         encounterModeInput.val(tab);
         if (tab === "encounter") refreshEncounterCount();
         updateCreateLabel();
+        updateAiUi();
         persistDialogOptions();
       });
       form.find("[data-action='open-ai-key']").on("click", () => {
@@ -855,21 +577,21 @@ export async function openNpcDialog() {
             : buildManualFullNpcPrompt(promptContext);
         const copied = await copyTextToClipboard(promptText);
         if (copied) {
-          ui.notifications?.info("NPC Button: ChatGPT prompt copied to clipboard.");
+          ui.notifications?.info(i18nText("ui.infoPromptCopied"));
           return;
         }
         new Dialog({
-          title: "ChatGPT NPC Prompt",
+          title: i18nText("ui.dialog.chatGptPromptTitle"),
           content: `
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
               <p style="margin:0;font-size:0.85rem;opacity:0.85;">
-                Copy this prompt and use it in ChatGPT. Ask for JSON-only reply.
+                ${i18nHtml("ui.dialog.chatGptPromptNote")}
               </p>
               <textarea style="width:100%;min-height:18rem;" readonly>${escapeHtml(promptText)}</textarea>
             </div>
           `,
           buttons: {
-            close: { label: "Close" }
+            close: { label: i18nText("common.close") }
           },
           default: "close"
         }).render(true);
@@ -881,10 +603,59 @@ export async function openNpcDialog() {
           speciesEntries
         });
       });
+      form.find("[data-action='shop-copy-prompt']").on("click", async () => {
+        const promptText = buildManualShopPrompt(collectShopPromptContext(form));
+        const copied = await copyTextToClipboard(promptText);
+        if (copied) {
+          ui.notifications?.info(i18nText("ui.shop.infoPromptCopied"));
+          return;
+        }
+        new Dialog({
+          title: i18nText("ui.dialog.shopPromptTitle"),
+          content: `
+            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+              <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+                ${i18nHtml("ui.dialog.shopPromptNote")}
+              </p>
+              <textarea style="width:100%;min-height:18rem;" readonly>${escapeHtml(promptText)}</textarea>
+            </div>
+          `,
+          buttons: {
+            close: { label: i18nText("common.close") }
+          },
+          default: "close"
+        }).render(true);
+      });
+      form.find("[data-action='shop-import-json']").on("click", () => {
+        openImportShopJsonDialog({
+          onImport: async (payload) => {
+            applyImportedShopPayloadToForm(form, payload);
+            shopImportPayloadInput.val(JSON.stringify(payload));
+            encounterModeInput.val("shop");
+            persistDialogOptions();
+            await createShopFromForm(new FormData(form[0]));
+            shopImportPayloadInput.val("");
+            persistDialogOptions();
+          }
+        });
+      });
       const updateAiUi = () => {
+        const mode = String(encounterModeInput.val() || "main");
         const useAi = !!useAiToggle.prop("checked");
+        const shopMode = mode === "shop";
+        aiSection.css("display", "flex");
         aiControls.css("display", useAi ? "flex" : "none");
-        createAiButton.toggle(useAi);
+        aiNpcActions.css("display", shopMode ? "none" : "grid");
+        aiShopActions.css("display", shopMode ? "grid" : "none");
+        aiNpcOptions.css("display", shopMode ? "none" : "grid");
+        aiNpcNotes.css("display", shopMode ? "none" : "block");
+        createAiButton.toggle(useAi && !shopMode);
+        if (shopMode) {
+          createAiButton.hide();
+          createAiButton.prop("disabled", true);
+          createAiButton.attr("title", "");
+          return;
+        }
         if (!useAi) {
           createAiButton.prop("disabled", false);
           createAiButton.attr("title", "");
@@ -892,7 +663,7 @@ export async function openNpcDialog() {
         }
         if (!aiReady) {
           createAiButton.prop("disabled", true);
-          createAiButton.attr("title", "Set OpenAI API key first.");
+          createAiButton.attr("title", i18nText("ui.dialog.setApiKeyFirstTitle"));
         } else {
           createAiButton.prop("disabled", false);
           createAiButton.attr("title", "");
@@ -939,14 +710,21 @@ export async function openNpcDialog() {
           "select[name='encounterSpecies']",
           "select[name='encounterArchetype']",
           "select[name='encounterDifficulty']",
+          "select[name='shopType']",
+          "select[name='shopBudget']",
+          "select[name='shopkeeperTier']",
           "select[name='folder']",
+          "select[name='shopFolder']",
           "input[name='partyLevel']",
           "input[name='partySize']",
           "input[name='count']",
+          "input[name='shopCount']",
+          "input[name='shopName']",
           "input[name='includeLoot']",
           "input[name='includeSecret']",
           "input[name='includeHook']",
-          "input[name='importantNpc']"
+          "input[name='importantNpc']",
+          "input[name='shopAllowMagic']"
         ].join(", "),
         persistDialogOptions
       );
@@ -970,11 +748,11 @@ export async function openNpcDialog() {
       updateCreateLabel();
       updateAiUi();
       persistDialogOptions();
-    }
+      }
     }).render(true);
   } catch (err) {
     console.error("NPC Button: Failed to open NPC dialog.", err);
-    ui.notifications?.error("NPC Button: Failed to open generator dialog. Check console.");
+    ui.notifications?.error(i18nText("ui.errorOpenDialogFailed"));
   }
 }
 
@@ -987,14 +765,11 @@ export async function createNpcFromForm(formData, options = {}) {
   try {
     await loadData();
 
-    if (!DATA_CACHE.archetypes?.length) {
-      ui.notifications?.error("NPC Button: No archetypes found. Check data/archetypes.json.");
-      return;
-    }
     const useAiRequested = formData.get("useAi") === "on";
     const useAiFullRequested = options?.aiFull === true;
     const useAiFull = useAiRequested && useAiFullRequested;
 
+    const encounterMode = String(formData.get("encounterMode") || "main");
     const tierInput = formData.get("tier");
     const tier = tierInput === "auto" ? getAutoTier() : Number(tierInput);
     const cultureInput = formData.get("culture");
@@ -1002,12 +777,18 @@ export async function createNpcFromForm(formData, options = {}) {
     const archetypeInput = formData.get("archetype");
     const folderInput = String(formData.get("folder") || "").trim() || null;
     let folderId = folderInput;
-    const encounterMode = String(formData.get("encounterMode") || "main");
     const encounterSpeciesKey = String(formData.get("encounterSpecies") || "random");
     const encounterArchetypeKey = String(formData.get("encounterArchetype") || "random");
     const partyLevelInput = Number(formData.get("partyLevel") || 3);
     const partySizeInput = Number(formData.get("partySize") || 4);
     const encounterDifficulty = String(formData.get("encounterDifficulty") || "medium");
+    const shopType = normalizeShopType(formData.get("shopType"));
+    const shopBudget = normalizeBudgetOption(formData.get("shopBudget"));
+    const shopCount = clampRangeValue(formData.get("shopCount"), 1, 60, 12);
+    const shopName = String(formData.get("shopName") || "").trim();
+    const shopkeeperTier = clampRangeValue(formData.get("shopkeeperTier"), 1, 4, 1);
+    const shopFolderInput = String(formData.get("shopFolder") || "").trim();
+    const shopAllowMagic = formData.get("shopAllowMagic") === "on";
     setLastNpcOptions({
       tier: String(tierInput || "auto"),
       budget: String(formData.get("budget") || "normal"),
@@ -1021,6 +802,13 @@ export async function createNpcFromForm(formData, options = {}) {
       partySize: partySizeInput,
       encounterDifficulty,
       encounterMode,
+      shopType,
+      shopBudget,
+      shopCount,
+      shopName,
+      shopkeeperTier,
+      shopFolder: shopFolderInput,
+      shopAllowMagic,
       useAi: useAiRequested,
       includeLoot: formData.get("includeLoot") === "on",
       includeSecret: formData.get("includeSecret") === "on",
@@ -1030,6 +818,16 @@ export async function createNpcFromForm(formData, options = {}) {
       includeAiFull: useAiFullRequested,
       importantNpc: formData.get("importantNpc") === "on"
     });
+
+    if (encounterMode === "shop") {
+      await createShopFromForm(formData);
+      return;
+    }
+
+    if (!DATA_CACHE.archetypes?.length) {
+      ui.notifications?.error(i18nText("ui.errorNoArchetypes"));
+      return;
+    }
     let countInput = Math.max(1, Math.min(50, Number(formData.get("count")) || 1));
     const budgetInput = String(formData.get("budget") || "normal");
     const speciesKeyInput = String(formData.get("species") || "random");
@@ -1047,7 +845,7 @@ export async function createNpcFromForm(formData, options = {}) {
         : null;
     setLastSpeciesKey(fixedSpecies?.key || "");
     if (!fixedSpecies && !speciesList.length) {
-      ui.notifications?.warn("NPC Button: No race entries found. Check your compendium packs.");
+      ui.notifications?.warn(i18nText("ui.warnNoRaceEntries"));
     }
     const includeLoot = formData.get("includeLoot") === "on";
     const includeSecret = formData.get("includeSecret") === "on";
@@ -1058,13 +856,13 @@ export async function createNpcFromForm(formData, options = {}) {
     const aiReady = isOpenAiConfigured();
 
     if (useAiFullRequested && !useAiRequested) {
-      ui.notifications?.warn("NPC Button: Enable 'Use AI' to use Create AI NPC.");
+      ui.notifications?.warn(i18nText("ui.warnEnableUseAiFirst"));
       return;
     }
 
     if (useAiFull && !aiReady) {
       ui.notifications?.warn(
-        "NPC Button: Full AI generation requires OpenAI API key in Module Settings on this GM browser."
+        i18nText("ui.warnAiFullRequiresApiKey")
       );
       return;
     }
@@ -1211,16 +1009,16 @@ export async function createNpcFromForm(formData, options = {}) {
 
     if (useAiFull) {
       if (aiFullApplied) {
-        ui.notifications?.info(`NPC Button: OpenAI full-generated ${aiFullApplied} NPC(s).`);
+        ui.notifications?.info(i18nFormat("ui.infoAiFullGenerated", { count: aiFullApplied }));
       }
       if (aiFullFailed) {
         ui.notifications?.warn(
-          `NPC Button: OpenAI full generation failed for ${aiFullFailed} NPC(s). Used local fallback generation.`
+          i18nFormat("ui.warnAiFullFailedFallback", { count: aiFullFailed })
         );
       }
       if (aiFullSkipped) {
         ui.notifications?.info(
-          `NPC Button: Skipped full AI generation for ${aiFullSkipped} NPC(s) due to max batch setting.`
+          i18nFormat("ui.infoAiFullSkippedByBatch", { count: aiFullSkipped })
         );
       }
     }
@@ -1228,21 +1026,21 @@ export async function createNpcFromForm(formData, options = {}) {
     if (!useAiFull && includeAiFlavor) {
       if (!aiReady) {
         ui.notifications?.warn(
-          "NPC Button: OpenAI flavor skipped (enable OpenAI + set API key in Module Settings on this GM browser)."
+          i18nText("ui.warnAiFlavorSkippedNotConfigured")
         );
       } else {
         const aiResult = await applyOpenAiFlavorToPlanned(planned);
         if (aiResult.applied) {
-          ui.notifications?.info(`NPC Button: OpenAI flavored ${aiResult.applied} NPC(s).`);
+          ui.notifications?.info(i18nFormat("ui.infoAiFlavorApplied", { count: aiResult.applied }));
         }
         if (aiResult.failed) {
           ui.notifications?.warn(
-            `NPC Button: OpenAI flavor failed for ${aiResult.failed} NPC(s). Used local flavor fallback.`
+            i18nFormat("ui.warnAiFlavorFailedFallback", { count: aiResult.failed })
           );
         }
         if (aiResult.skipped) {
           ui.notifications?.info(
-            `NPC Button: Skipped OpenAI flavor for ${aiResult.skipped} NPC(s) due to max batch setting.`
+            i18nFormat("ui.infoAiFlavorSkippedByBatch", { count: aiResult.skipped })
           );
         }
       }
@@ -1251,21 +1049,21 @@ export async function createNpcFromForm(formData, options = {}) {
     if (includeAiToken) {
       if (!aiReady) {
         ui.notifications?.warn(
-          "NPC Button: OpenAI token skipped (enable OpenAI + set API key in Module Settings on this GM browser)."
+          i18nText("ui.warnAiTokenSkippedNotConfigured")
         );
       } else {
         const aiTokenResult = await applyOpenAiTokenToPlanned(planned);
         if (aiTokenResult.applied) {
-          ui.notifications?.info(`NPC Button: OpenAI generated ${aiTokenResult.applied} token(s).`);
+          ui.notifications?.info(i18nFormat("ui.infoAiTokenGenerated", { count: aiTokenResult.applied }));
         }
         if (aiTokenResult.failed) {
           ui.notifications?.warn(
-            `NPC Button: OpenAI token failed for ${aiTokenResult.failed} NPC(s). Used local token fallback.`
+            i18nFormat("ui.warnAiTokenFailedFallback", { count: aiTokenResult.failed })
           );
         }
         if (aiTokenResult.skipped) {
           ui.notifications?.info(
-            `NPC Button: Skipped OpenAI token for ${aiTokenResult.skipped} NPC(s) due to max batch setting.`
+            i18nFormat("ui.infoAiTokenSkippedByBatch", { count: aiTokenResult.skipped })
           );
         }
       }
@@ -1292,11 +1090,11 @@ export async function createNpcFromForm(formData, options = {}) {
     const resolvedAiItems = buildResults.reduce((sum, entry) => sum + Number(entry.resolvedItems || 0), 0);
     const missingAiItems = buildResults.reduce((sum, entry) => sum + Number(entry.missingItems || 0), 0);
     if (useAiFull && resolvedAiItems) {
-      ui.notifications?.info(`NPC Button: Matched ${resolvedAiItems} AI-requested item(s) from compendiums.`);
+      ui.notifications?.info(i18nFormat("ui.infoAiItemsMatched", { count: resolvedAiItems }));
     }
     if (useAiFull && missingAiItems) {
       ui.notifications?.warn(
-        `NPC Button: Could not match ${missingAiItems} AI-requested item(s) in compendiums.`
+        i18nFormat("ui.warnAiItemsMissing", { count: missingAiItems })
       );
     }
 
@@ -1330,22 +1128,1021 @@ export async function createNpcFromForm(formData, options = {}) {
     }
     if (speciesApplyErrors) {
       ui.notifications?.warn(
-        `NPC Button: ${speciesApplyErrors} NPC(s) were created without full species data. Check console.`
+        i18nFormat("ui.warnSpeciesApplyPartial", { count: speciesApplyErrors })
       );
     }
 
     if (created.length === 1) {
-      ui.notifications?.info(`Created NPC: ${created[0]?.name || "Unnamed"}`);
+      ui.notifications?.info(i18nFormat("ui.infoCreatedSingle", { name: created[0]?.name || i18nText("common.unnamed") }));
       return;
     }
     const names = created.map((a) => a?.name).filter(Boolean);
     const preview = names.slice(0, 5).join(", ");
-    const extra = names.length > 5 ? ` +${names.length - 5} more` : "";
-    ui.notifications?.info(`Created ${created.length} NPCs: ${preview}${extra}`);
+    const extra = names.length > 5 ? i18nFormat("ui.moreSuffix", { count: names.length - 5 }) : "";
+    ui.notifications?.info(i18nFormat("ui.infoCreatedMany", { count: created.length, preview, extra }));
   } catch (err) {
     console.error("NPC Button: Failed to create NPC(s).", err);
-    ui.notifications?.error("NPC Button: NPC generation failed. Check console.");
+    ui.notifications?.error(i18nText("ui.errorCreateNpcFailed"));
   }
+}
+
+async function createShopFromForm(formData) {
+  const shopType = normalizeShopType(formData.get("shopType"));
+  const itemCount = clampRangeValue(formData.get("shopCount"), 1, 60, 12);
+  const budget = normalizeBudgetOption(formData.get("shopBudget") || formData.get("budget"));
+  const shopNameInput = String(formData.get("shopName") || "").trim();
+  const allowMagic = formData.get("shopAllowMagic") === "on";
+  const shopkeeperTier = clampRangeValue(formData.get("shopkeeperTier"), 1, 4, 1);
+  const fallbackFolderId = String(formData.get("shopFolder") || formData.get("folder") || "").trim() || null;
+  const typeLabel = getShopTypeLabel(shopType);
+  const importPayload = parseShopImportPayload(formData.get("shopImportPayload"));
+  const importedShopName = String(importPayload?.shopName || "").trim();
+  const shopName = importedShopName || shopNameInput || i18nFormat("ui.shop.defaultNameByType", { type: typeLabel });
+  const hasImportPayload = !!importPayload;
+
+  let folderId = fallbackFolderId;
+  folderId = (await ensureShopFolder(shopType)) || fallbackFolderId;
+  setLastFolderId(folderId || "");
+
+  let stockItems = [];
+  let importStats = null;
+  if (hasImportPayload) {
+    importStats = await buildShopInventoryFromImport({
+      importPayload,
+      shopType,
+      budget,
+      allowMagic
+    });
+    stockItems = Array.isArray(importStats?.items) ? importStats.items : [];
+  } else {
+    stockItems = await buildShopInventory({
+      shopType,
+      itemCount,
+      budget,
+      allowMagic
+    });
+  }
+
+  const actor = await createShopkeeperActor({
+    shopName,
+    budget,
+    tier: shopkeeperTier,
+    folderId,
+    stockItems,
+    replaceGeneratedItems: hasImportPayload
+  });
+
+  if (!actor) {
+    ui.notifications?.warn(i18nText("ui.shop.warnCreationFailed"));
+    return;
+  }
+
+  if (Number(importStats?.missing || 0) > 0) {
+    ui.notifications?.warn(
+      i18nFormat("ui.shop.warnImportItemsMissing", {
+        missing: Number(importStats.missing),
+        resolved: Number(importStats.resolved || 0)
+      })
+    );
+  }
+
+  ui.notifications?.info(
+    i18nFormat("ui.shop.infoCreated", {
+      shop: shopName,
+      count: stockItems.length,
+      preview: actor?.name || i18nText("common.unnamed")
+    })
+  );
+}
+
+async function buildShopInventory({ shopType, itemCount, budget, allowMagic }) {
+  const desired = clampRangeValue(itemCount, 1, 60, 12);
+  const type = normalizeShopType(shopType);
+  const packs = uniquePackNames([
+    ...getPacks("weapons"),
+    ...getPacks("loot"),
+    ...getPacks("spells")
+  ]);
+  let docs = getCachedItemDocsFromPacks(packs);
+  if (!docs.length) {
+    docs = await collectItemDocsFromPacks(packs);
+  }
+  const pools = buildShopPoolsFromCache(docs, allowMagic);
+  if (!pools.market.length) return [];
+  const result = [];
+  const seen = new Set();
+
+  const plan = buildShopCategoryPlan(type, desired);
+  const maxAttempts = Math.max(desired * 10, 24);
+  let attempts = 0;
+  while (result.length < desired && attempts < maxAttempts) {
+    const plannedCategory = plan[result.length] || (type === "market" ? pickWeightedShopCategory() : type);
+    const doc =
+      pickShopDocFromPool(pools[plannedCategory], seen, budget, allowMagic) ||
+      pickShopDocFromPool(pools.general, seen, budget, allowMagic) ||
+      pickShopDocFromPool(pools.market, seen, budget, allowMagic);
+    attempts += 1;
+    if (!doc) continue;
+    const item = toShopItemData(doc, plannedCategory, budget, allowMagic);
+    if (!item?.name) continue;
+    const key = String(item.name || "").trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
+async function buildShopInventoryFromImport({ importPayload, shopType, budget, allowMagic }) {
+  const payload = importPayload && typeof importPayload === "object" ? importPayload : null;
+  const refs = normalizeShopItemRefs(payload?.items);
+  if (!refs.length) return { items: [], resolved: 0, missing: 0 };
+
+  const desired = refs.length;
+  const type = normalizeShopType(shopType);
+  const packs = uniquePackNames([
+    ...getPacks("weapons"),
+    ...getPacks("loot"),
+    ...getPacks("spells")
+  ]);
+  let docs = getCachedItemDocsFromPacks(packs);
+  if (!docs.length) docs = await collectItemDocsFromPacks(packs);
+  const pools = buildShopPoolsFromCache(docs, allowMagic);
+  if (!pools.market.length) return { items: [], resolved: 0, missing: refs.length };
+
+  const result = [];
+  const seen = new Set();
+  let resolved = 0;
+  let missing = 0;
+
+  for (const ref of refs) {
+    if (result.length >= desired) break;
+    const doc = findShopDocByImportRef(pools.market, ref, allowMagic);
+    if (!doc) {
+      missing += 1;
+      continue;
+    }
+    const category = inferShopCategoryFromDoc(doc, type);
+    const item = toShopItemData(doc, category, budget, allowMagic);
+    if (!item?.name) {
+      missing += 1;
+      continue;
+    }
+    applyImportedShopItemOverrides(item, ref);
+    const key = normalizeShopSearchKey(item.name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+    resolved += 1;
+  }
+
+  return { items: result, resolved, missing };
+}
+
+function findShopDocByImportRef(docs, ref, allowMagic) {
+  const list = Array.isArray(docs) ? docs : [];
+  if (!list.length || !ref) return null;
+
+  const seeds = buildShopImportSeeds(ref);
+  if (!seeds.length) return null;
+  const exactMatches = [];
+  let best = null;
+
+  for (const doc of list) {
+    if (!isAllowedItemDoc(doc, allowMagic)) continue;
+    const score = scoreShopImportDoc(doc, seeds);
+    if (score >= 100) exactMatches.push(doc);
+    if (!best || score > best.score) best = { doc, score };
+  }
+
+  if (exactMatches.length) {
+    return pickPreferredLocalizedDoc(exactMatches);
+  }
+  if (best?.score > 0) return best.doc;
+  return null;
+}
+
+function buildShopImportSeeds(ref) {
+  const values = [
+    String(ref?.name || ""),
+    String(ref?.lookup || ""),
+    String(ref?.canonical || "")
+  ]
+    .flatMap((value) => value.split(/[|/;,]+/))
+    .map((value) => value.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return Array.from(new Set(values.map((value) => normalizeShopSearchKey(value)).filter(Boolean)));
+}
+
+function scoreShopImportDoc(doc, seeds) {
+  const nameKey = normalizeShopSearchKey(doc?.name);
+  const idKey = normalizeShopSearchKey(doc?.system?.identifier);
+  const aliases = [];
+  if (nameKey) aliases.push(nameKey);
+  if (idKey && idKey !== nameKey) aliases.push(idKey);
+  if (!aliases.length) return 0;
+
+  let best = 0;
+  for (const seed of seeds) {
+    if (!seed) continue;
+    for (const candidate of aliases) {
+      if (!candidate) continue;
+      if (candidate === seed) best = Math.max(best, 120);
+      else if (candidate.startsWith(seed) || seed.startsWith(candidate)) best = Math.max(best, 95);
+      else if (candidate.includes(seed) || seed.includes(candidate)) best = Math.max(best, 80);
+      else {
+        const overlap = tokenOverlapRatio(candidate, seed);
+        if (overlap >= 0.8) best = Math.max(best, 72);
+        else if (overlap >= 0.6) best = Math.max(best, 60);
+        else if (overlap >= 0.4) best = Math.max(best, 42);
+      }
+    }
+  }
+  return best;
+}
+
+function tokenOverlapRatio(a, b) {
+  const aTokens = new Set(String(a || "").split("-").filter(Boolean));
+  const bTokens = new Set(String(b || "").split("-").filter(Boolean));
+  if (!aTokens.size || !bTokens.size) return 0;
+  let common = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) common += 1;
+  }
+  const denom = Math.max(aTokens.size, bTokens.size);
+  return denom ? common / denom : 0;
+}
+
+function normalizeShopSearchKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/['’`"]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zа-яё0-9_-]+/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .trim();
+}
+
+function pickPreferredLocalizedDoc(candidates) {
+  const list = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+  if (!list.length) return null;
+  const preferred = preferDocsByInterfaceLanguage(list);
+  return preferred?.[0] || list[0];
+}
+
+function inferShopCategoryFromDoc(doc, fallbackType = "market") {
+  if (isArmorShopDoc(doc)) return "armor";
+  if (isScrollShopDoc(doc)) return "scrolls";
+  if (String(doc?.type || "").toLowerCase() === "weapon") return "weapons";
+  if (isAlchemyShopDoc(doc)) return "alchemy";
+  if (isFoodShopDoc(doc)) return "food";
+  if (isGeneralShopDoc(doc)) return "general";
+  const type = normalizeShopType(fallbackType);
+  return type === "market" ? "general" : type;
+}
+
+function applyImportedShopItemOverrides(item, ref) {
+  if (!item || !ref) return;
+  const qty = clampRangeValue(ref.quantity, 1, 9999, null);
+  if (Number.isFinite(qty) && qty > 0) {
+    item.system = item.system && typeof item.system === "object" ? item.system : {};
+    item.system.quantity = qty;
+  }
+
+  const priceGp = normalizeImportedItemPriceGp(ref);
+  if (Number.isFinite(priceGp) && priceGp > 0) {
+    item.system = item.system && typeof item.system === "object" ? item.system : {};
+    item.system.price = {
+      value: Math.max(1, Math.round(priceGp)),
+      denomination: "gp"
+    };
+    item.flags = item.flags && typeof item.flags === "object" ? item.flags : {};
+    item.flags[MODULE_ID] = item.flags[MODULE_ID] && typeof item.flags[MODULE_ID] === "object"
+      ? item.flags[MODULE_ID]
+      : {};
+    item.flags[MODULE_ID].shopRolledPriceCp = Math.round(priceGp * 100);
+  }
+}
+
+function normalizeImportedItemPriceGp(ref) {
+  const direct = Number(ref?.priceGp);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
+  const raw = ref?.price;
+  if (Number.isFinite(Number(raw)) && Number(raw) > 0) return Number(raw);
+  if (!raw || typeof raw !== "object") return null;
+
+  const value = Number(raw.value);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const denomination = String(raw.denomination || raw.unit || "gp").trim().toLowerCase();
+  const toGp = {
+    pp: 10,
+    gp: 1,
+    ep: 0.5,
+    sp: 0.1,
+    cp: 0.01
+  };
+  return value * (toGp[denomination] || 1);
+}
+
+function buildShopPoolsFromCache(docs, allowMagic) {
+  const list = Array.isArray(docs) ? docs.filter(Boolean) : [];
+  const withType = list.filter((doc) => {
+    const type = String(doc?.type || "").toLowerCase();
+    if (!["weapon", "equipment", "loot", "consumable", "tool", "spell"].includes(type)) return false;
+    if (!allowMagic && type === "spell") return false;
+    return isAllowedItemDoc(doc, allowMagic);
+  });
+  const out = {
+    market: withType,
+    general: withType.filter((doc) => isGeneralShopDoc(doc)),
+    alchemy: withType.filter((doc) => isAlchemyShopDoc(doc)),
+    scrolls: withType.filter((doc) => isScrollShopDoc(doc)),
+    weapons: withType.filter((doc) => String(doc?.type || "").toLowerCase() === "weapon"),
+    armor: withType.filter((doc) => isArmorShopDoc(doc)),
+    food: withType.filter((doc) => isFoodShopDoc(doc))
+  };
+
+  if (!out.general.length) {
+    out.general = withType.filter((doc) => {
+      const type = String(doc?.type || "").toLowerCase();
+      return ["equipment", "loot", "tool", "consumable"].includes(type);
+    });
+  }
+  if (!out.alchemy.length) {
+    out.alchemy = withType.filter((doc) => String(doc?.type || "").toLowerCase() === "consumable");
+  }
+  if (!out.scrolls.length) {
+    out.scrolls = withType.filter((doc) => {
+      const docType = String(doc?.type || "").toLowerCase();
+      return docType === "spell" || docType === "consumable";
+    });
+  }
+  if (!out.food.length) {
+    out.food = withType.filter((doc) => {
+      const docType = String(doc?.type || "").toLowerCase();
+      return docType === "consumable" && !isScrollShopDoc(doc);
+    });
+  }
+  if (!out.market.length) out.market = withType;
+  return out;
+}
+
+function buildShopCategoryPlan(shopType, desired) {
+  const type = normalizeShopType(shopType);
+  if (type !== "market") return Array.from({ length: desired }, () => type);
+  const categories = [];
+  for (let i = 0; i < desired; i++) categories.push(pickWeightedShopCategory());
+  return categories;
+}
+
+function pickWeightedShopCategory() {
+  const total = SHOP_TYPE_WEIGHTS.reduce((sum, entry) => sum + Number(entry.weight || 0), 0);
+  if (!total) return "general";
+  let roll = Math.random() * total;
+  for (const entry of SHOP_TYPE_WEIGHTS) {
+    roll -= Number(entry.weight || 0);
+    if (roll <= 0) return entry.type;
+  }
+  return SHOP_TYPE_WEIGHTS[SHOP_TYPE_WEIGHTS.length - 1]?.type || "general";
+}
+
+function pickShopDocFromPool(pool, seen, budget, allowMagic) {
+  const source = Array.isArray(pool) ? pool : [];
+  if (!source.length) return null;
+  const unseen = source.filter((doc) => {
+    const key = String(doc?.name || "").trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    return isAllowedItemDoc(doc, allowMagic);
+  });
+  if (!unseen.length) return null;
+
+  const preferred = preferDocsByInterfaceLanguage(unseen);
+  const priced = preferred.filter((doc) => {
+    const cp = getItemPriceValue(doc);
+    return Number.isFinite(cp) && cp > 0;
+  });
+  const withinBudget = priced.filter((doc) => isWithinBudget(doc, budget, allowMagic));
+  if (withinBudget.length) return pickRandom(withinBudget);
+
+  if (priced.length) {
+    const range = getBudgetRange(budget, allowMagic);
+    const target = Math.round((Number(range?.min || 0) + Number(range?.max || 0)) / 2);
+    let best = null;
+    for (const doc of priced) {
+      const cp = Number(getItemPriceValue(doc) || 0);
+      const distance = Math.abs(cp - target);
+      if (!best || distance < best.distance) {
+        best = { doc, distance };
+      }
+    }
+    if (best?.doc) return best.doc;
+  }
+
+  return pickRandom(preferred);
+}
+
+function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
+  const item = cloneItemData(toItemData(doc));
+  if (!item || typeof item !== "object") return null;
+  item.system = item.system && typeof item.system === "object" ? item.system : {};
+  item.flags = item.flags && typeof item.flags === "object" ? item.flags : {};
+  item.flags[MODULE_ID] = item.flags[MODULE_ID] && typeof item.flags[MODULE_ID] === "object"
+    ? item.flags[MODULE_ID]
+    : {};
+
+  const sourceUuid = getSourceUuidForShopDoc(doc);
+  if (sourceUuid) {
+    item.flags[MODULE_ID].shopSourceUuid = sourceUuid;
+    item.flags.core = item.flags.core && typeof item.flags.core === "object" ? item.flags.core : {};
+    if (!item.flags.core.sourceId) item.flags.core.sourceId = sourceUuid;
+    item.flags.dnd5e = item.flags.dnd5e && typeof item.flags.dnd5e === "object" ? item.flags.dnd5e : {};
+    if (!item.flags.dnd5e.sourceId) item.flags.dnd5e.sourceId = sourceUuid;
+  }
+
+  applyShopPriceVariance(item, doc, budget, allowMagic);
+  if (item.system.equipped !== undefined) item.system.equipped = false;
+  if (item.system.proficient !== undefined) item.system.proficient = false;
+  const quantity = getShopItemQuantity(item, category);
+  if (Number.isFinite(quantity) && quantity > 0) item.system.quantity = quantity;
+  return item;
+}
+
+function getShopItemQuantity(item, category) {
+  const type = String(item?.type || "").toLowerCase();
+  const subtype = getItemSubtype(item);
+  if (type === "weapon" || category === "armor" || isArmorShopDoc(item)) return 1;
+  if (isScrollShopDoc(item)) return randInt(1, 3);
+  if (isFoodShopDoc(item)) return randInt(3, 10);
+  if (isAlchemyShopDoc(item)) return randInt(1, 4);
+  if (type === "consumable" && subtype === "ammo") return randInt(5, 20);
+  if (type === "consumable") return randInt(1, 6);
+  return randInt(1, 5);
+}
+
+function getSourceUuidForShopDoc(doc) {
+  const direct = String(
+    doc?.flags?.[MODULE_ID]?.shopSourceUuid ||
+    doc?.__shopSourceUuid ||
+    doc?.uuid ||
+    doc?.flags?.core?.sourceId ||
+    doc?.flags?.dnd5e?.sourceId ||
+    ""
+  ).trim();
+  if (direct) return direct;
+  const packName = String(doc?.pack || doc?.collection || "").trim();
+  const docId = String(doc?._id || doc?.id || "").trim();
+  if (!packName || !docId) return "";
+  return `Compendium.${packName}.Item.${docId}`;
+}
+
+function applyShopPriceVariance(item, sourceDoc, budget = "normal", allowMagic = false) {
+  const baseCp = resolveShopBasePriceCp(sourceDoc, item, budget, allowMagic);
+  if (!Number.isFinite(baseCp) || baseCp <= 0) return;
+  const multiplier = 0.7 + Math.random() * 0.6;
+  const rolledCp = Math.max(1, Math.round(baseCp * multiplier));
+  setItemPriceFromCp(item, rolledCp);
+
+  item.flags = item.flags && typeof item.flags === "object" ? item.flags : {};
+  item.flags[MODULE_ID] = item.flags[MODULE_ID] && typeof item.flags[MODULE_ID] === "object"
+    ? item.flags[MODULE_ID]
+    : {};
+  item.flags[MODULE_ID].shopBasePriceCp = Math.round(baseCp);
+  item.flags[MODULE_ID].shopRolledPriceCp = rolledCp;
+}
+
+function resolveShopBasePriceCp(sourceDoc, item, budget = "normal", allowMagic = false) {
+  const direct = getItemPriceValue(sourceDoc) ?? getItemPriceValue(item);
+  if (Number.isFinite(direct) && direct > 0) return Math.round(direct);
+
+  const range = getBudgetRange(budget, allowMagic);
+  const min = Math.max(1, Number(range?.min || 1));
+  const max = Math.max(min, Number(range?.max || min));
+  const spread = Math.max(1, max - min);
+  const low = min + Math.floor(spread * 0.15);
+  const high = min + Math.floor(spread * 0.55);
+  return randInt(Math.max(1, low), Math.max(low, high));
+}
+
+function setItemPriceFromCp(item, cpValue) {
+  const cp = Math.max(0, Math.round(Number(cpValue) || 0));
+  // Store all shop prices in gold pieces to keep pricing consistent.
+  const valueGp = Math.max(1, Math.round(cp / 100));
+  item.system = item.system && typeof item.system === "object" ? item.system : {};
+  item.system.price = {
+    value: valueGp,
+    denomination: "gp"
+  };
+}
+
+async function createShopkeeperActor({ shopName, budget, tier, folderId, stockItems, replaceGeneratedItems = false }) {
+  if (!DATA_CACHE.archetypes?.length) return null;
+  const merchant =
+    DATA_CACHE.archetypes.find((entry) => String(entry?.id || "").toLowerCase() === "merchant") ||
+    DATA_CACHE.archetypes.find((entry) => Array.isArray(entry?.tags) && entry.tags.includes("social")) ||
+    DATA_CACHE.archetypes[0];
+  if (!merchant) return null;
+
+  const cultures = Object.keys(DATA_CACHE.names?.cultures || {});
+  const culture = cultures.length ? pickRandom(cultures) : "common";
+  const generated = generateNpc({
+    tier: clampRangeValue(tier, 1, 4, 1),
+    archetype: merchant,
+    culture,
+    gender: "random",
+    race: "Humanoid",
+    budget,
+    includeLoot: false,
+    includeSecret: false,
+    includeHook: false,
+    importantNpc: false,
+    usedNames: new Set()
+  });
+
+  generated.name = i18nFormat("ui.shop.shopkeeperNameByShop", { shop: shopName });
+  generated.loot = { coins: { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 }, items: [] };
+  generated.includeLoot = false;
+  generated.secret = null;
+  generated.hook = null;
+  generated.motivation = i18nFormat("ui.shop.shopkeeperMotivation", { shop: shopName });
+  generated.speech = i18nText("ui.shop.shopkeeperSpeech");
+
+  const actorData = await buildActorData(generated, folderId || null);
+  actorData.name = i18nFormat("ui.shop.shopkeeperActorName", { shop: shopName });
+  const stock = (stockItems || []).map((item) => cloneItemData(item)).filter(Boolean);
+  actorData.items = replaceGeneratedItems
+    ? stock
+    : [...(Array.isArray(actorData.items) ? actorData.items : []), ...stock];
+  actorData.system = actorData.system || {};
+  actorData.system.details = actorData.system.details || {};
+  actorData.system.details.biography = actorData.system.details.biography || {};
+  const oldBio = String(actorData.system.details.biography.value || "");
+  const stockCount = Array.isArray(stockItems) ? stockItems.length : 0;
+  const shopNote = `<p><strong>${escapeHtml(i18nText("ui.shop.shopkeeperStockLabel"))}</strong> ${escapeHtml(i18nFormat("ui.shop.shopkeeperStockValue", { count: stockCount }))}</p>`;
+  actorData.system.details.biography.value = `${oldBio}${shopNote}`;
+
+  try {
+    return await Actor.create(actorData);
+  } catch (err) {
+    console.warn("NPC Button: Failed to create shopkeeper actor.", err);
+    return null;
+  }
+}
+
+function preferDocsByInterfaceLanguage(docs) {
+  const list = Array.isArray(docs) ? docs : [];
+  const preferredScript = detectPreferredScriptByLanguage();
+  if (!preferredScript) return list;
+  const preferred = list.filter((doc) => detectTextScript(doc?.name) === preferredScript);
+  if (preferred.length) return preferred;
+  if (preferredScript !== "latin") {
+    const latin = list.filter((doc) => detectTextScript(doc?.name) === "latin");
+    if (latin.length) return latin;
+  }
+  return list;
+}
+
+function getCachedItemDocsFromPacks(packs) {
+  const result = [];
+  const seen = new Set();
+  for (const packName of packs || []) {
+    const packData = DATA_CACHE.compendiumCache?.packs?.[packName];
+    const docs = Object.entries(packData?.documents || {});
+    for (const [docId, doc] of docs) {
+      if (!doc || typeof doc !== "object") continue;
+      const sourceUuid = `Compendium.${packName}.Item.${docId}`;
+      const key = `${packName}.${docId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
+        ...doc,
+        __shopSourceUuid: sourceUuid
+      });
+    }
+  }
+  return result;
+}
+
+async function collectItemDocsFromPacks(packs) {
+  const result = [];
+  const seen = new Set();
+  for (const packName of packs || []) {
+    const pack = game.packs?.get(packName);
+    if (!pack) continue;
+    try {
+      const docs = await pack.getDocuments();
+      for (const doc of docs || []) {
+        const data = doc?.toObject ? doc.toObject() : doc;
+        const docId = String(doc?.id || data?._id || data?.id || "");
+        const sourceUuid = String(
+          doc?.uuid ||
+          data?.uuid ||
+          data?.flags?.core?.sourceId ||
+          data?.flags?.dnd5e?.sourceId ||
+          `Compendium.${pack.collection}.Item.${docId}`
+        );
+        const key = String(sourceUuid || `${pack.collection}.${docId}`);
+        if (!data || !key || seen.has(key)) continue;
+        seen.add(key);
+        result.push({
+          ...data,
+          __shopSourceUuid: sourceUuid
+        });
+      }
+    } catch (err) {
+      console.warn(`NPC Button: Failed to load item docs from pack "${packName}".`, err);
+    }
+  }
+  return result;
+}
+
+function detectTextScript(value) {
+  const text = String(value || "");
+  if (/[а-яё]/i.test(text)) return "cyrillic";
+  if (/[a-z]/i.test(text)) return "latin";
+  return null;
+}
+
+function detectPreferredScriptByLanguage() {
+  const lang = String(game?.i18n?.lang || game?.settings?.get?.("core", "language") || "")
+    .trim()
+    .toLowerCase();
+  if (lang.startsWith("ru") || lang.startsWith("uk") || lang.startsWith("be")) return "cyrillic";
+  if (lang.startsWith("en")) return "latin";
+  return null;
+}
+
+function getItemSubtype(entry) {
+  return String(
+    entry?.system?.type?.value ||
+    entry?.system?.consumableType?.value ||
+    entry?.system?.consumableType ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isGeneralShopDoc(doc) {
+  const type = String(doc?.type || "").toLowerCase();
+  if (type === "weapon" || type === "spell") return false;
+  if (!["equipment", "loot", "tool", "consumable"].includes(type)) return false;
+  if (isFoodShopDoc(doc) || isArmorShopDoc(doc) || isScrollShopDoc(doc) || isAlchemyShopDoc(doc)) return false;
+  return true;
+}
+
+function isArmorShopDoc(doc) {
+  const type = String(doc?.type || "").toLowerCase();
+  if (type !== "equipment") return false;
+  const armorType = String(doc?.system?.armor?.type || "").toLowerCase();
+  if (armorType && armorType !== "none" && armorType !== "clothing" && armorType !== "trinket") return true;
+  const subtype = getItemSubtype(doc);
+  return ["light", "medium", "heavy", "shield", "natural"].includes(subtype);
+}
+
+function isAlchemyShopDoc(doc) {
+  const type = String(doc?.type || "").toLowerCase();
+  if (type !== "consumable") return false;
+  const subtype = getItemSubtype(doc);
+  return subtype === "potion" || subtype === "poison";
+}
+
+function isFoodShopDoc(doc) {
+  const type = String(doc?.type || "").toLowerCase();
+  if (type !== "consumable") return false;
+  const subtype = getItemSubtype(doc);
+  return subtype === "food";
+}
+
+function isScrollShopDoc(doc) {
+  const type = String(doc?.type || "").toLowerCase();
+  if (type === "spell") return true;
+  if (type !== "consumable") return false;
+  const subtype = getItemSubtype(doc);
+  return subtype === "scroll";
+}
+
+function getShopTypeLabel(shopType) {
+  const type = normalizeShopType(shopType);
+  const keyMap = {
+    market: "ui.dialog.shopTypeMarket",
+    general: "ui.dialog.shopTypeGeneral",
+    alchemy: "ui.dialog.shopTypeAlchemy",
+    scrolls: "ui.dialog.shopTypeScrolls",
+    weapons: "ui.dialog.shopTypeWeapons",
+    armor: "ui.dialog.shopTypeArmor",
+    food: "ui.dialog.shopTypeFood"
+  };
+  return i18nText(keyMap[type] || keyMap.market);
+}
+
+function normalizeShopType(value) {
+  const type = String(value || "").trim().toLowerCase();
+  return SHOP_TYPES.has(type) ? type : "market";
+}
+
+function normalizeBudgetOption(value) {
+  const budget = String(value || "").trim().toLowerCase();
+  return BUDGET_OPTIONS.has(budget) ? budget : "normal";
+}
+
+function capitalizeBudgetKey(budget) {
+  const value = normalizeBudgetOption(budget);
+  if (value === "well") return "WellOff";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function clampRangeValue(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(numeric)));
+}
+
+function uniquePackNames(packs) {
+  return Array.from(new Set((packs || []).filter(Boolean)));
+}
+
+function collectShopPromptContext(form) {
+  const shopType = normalizeShopType(form.find("select[name='shopType']").val());
+  const shopBudget = normalizeBudgetOption(form.find("select[name='shopBudget']").val());
+  const itemCount = clampRangeValue(form.find("input[name='shopCount']").val(), 1, 60, 12);
+  const shopName = String(form.find("input[name='shopName']").val() || "").trim();
+  const shopkeeperTier = clampRangeValue(form.find("select[name='shopkeeperTier']").val(), 1, 4, 1);
+  const allowMagic = !!form.find("input[name='shopAllowMagic']").prop("checked");
+  const langCode = String(game?.i18n?.lang || "en").trim() || "en";
+  const langName = langCode.startsWith("ru") ? "Russian" : langCode.startsWith("en") ? "English" : langCode;
+  return {
+    shopType,
+    shopTypeLabel: getShopTypeLabel(shopType),
+    shopBudget,
+    itemCount,
+    shopName,
+    shopkeeperTier,
+    allowMagic,
+    language: { code: langCode, name: langName }
+  };
+}
+
+function buildManualShopPrompt(context = {}) {
+  const itemCount = clampRangeValue(context.itemCount, 1, 60, 12);
+  const tier = clampRangeValue(context.shopkeeperTier, 1, 4, 1);
+  const type = normalizeShopType(context.shopType);
+  const budget = normalizeBudgetOption(context.shopBudget);
+  const allowMagic = !!context.allowMagic;
+  const language = context.language?.name || "English";
+  const languageCode = context.language?.code || "en";
+  const typeLabel = String(context.shopTypeLabel || getShopTypeLabel(type)).trim();
+  const shopName = String(context.shopName || "").trim();
+
+  return [
+    "Output exactly one ```json code block``` and nothing else.",
+    "Inside the block, output one valid JSON object parseable by JSON.parse.",
+    "Use this exact schema:",
+    "{",
+    "  \"shopName\": \"...\",",
+    `  \"shopType\": \"${type}\",`,
+    `  \"shopBudget\": \"${budget}\",`,
+    "  \"shopkeeperTier\": 1,",
+    "  \"shopAllowMagic\": true,",
+    "  \"itemCount\": 12,",
+    "  \"items\": [",
+    "    {",
+    "      \"name\": \"localized item name\",",
+    "      \"lookup\": \"English canonical item name\",",
+    "      \"quantity\": 1",
+    "    }",
+    "  ]",
+    "}",
+    "Rules:",
+    "- \"shopType\" must be one of: market, general, alchemy, scrolls, weapons, armor, food.",
+    "- \"shopBudget\" must be one of: poor, normal, well, elite.",
+    "- \"items\" must be an array of objects.",
+    "- \"lookup\" is mandatory and should be English canonical D&D item name.",
+    "- Write \"name\" in interface language when possible.",
+    "- No null values, no comments, no trailing commas.",
+    "",
+    "Shop context:",
+    `- Type: ${type} (${typeLabel})`,
+    `- Budget: ${budget}`,
+    `- Target item count: ${itemCount}`,
+    `- Shopkeeper tier: ${tier}`,
+    `- Allow magic: ${allowMagic ? "yes" : "no"}`,
+    `- Preferred shop name: ${shopName || "Any"}`,
+    `- Interface language: ${language} (${languageCode})`
+  ].join("\n");
+}
+
+function openImportShopJsonDialog({ onImport }) {
+  new Dialog({
+    title: i18nText("ui.dialog.shopImportTitle"),
+    content: `
+      <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+          ${i18nHtml("ui.dialog.shopImportDescription")}
+        </p>
+        <textarea name="shopJson" style="width:100%;min-height:18rem;" placeholder='${i18nHtml("ui.dialog.shopImportPlaceholder")}'></textarea>
+      </div>
+    `,
+    buttons: {
+      import: {
+        label: i18nText("ui.dialog.shopImportJson"),
+        callback: async (html) => {
+          const rawJson = String(html.find("textarea[name='shopJson']").val() || "").trim();
+          if (!rawJson) {
+            ui.notifications?.warn(i18nText("ui.shop.warnPasteJsonFirst"));
+            return;
+          }
+          try {
+            const parsed = parseLooseJsonObject(rawJson);
+            const payload = normalizeImportedShopPayload(parsed);
+            if (!payload) {
+              throw new Error(i18nText("ui.shop.errorImportInvalidShape"));
+            }
+            if (typeof onImport === "function") await onImport(payload);
+            ui.notifications?.info(
+              i18nFormat("ui.shop.infoImportApplied", { count: Number(payload.items?.length || 0) })
+            );
+          } catch (err) {
+            console.error("NPC Button: Failed to import shop JSON.", err);
+            const reason = String(err?.message || "").trim();
+            ui.notifications?.error(
+              reason
+                ? i18nFormat("ui.shop.errorImportFailedWithReason", { reason })
+                : i18nText("ui.shop.errorImportFailed")
+            );
+          }
+        }
+      },
+      cancel: { label: i18nText("common.cancel") }
+    },
+    default: "import"
+  }).render(true);
+}
+
+function applyImportedShopPayloadToForm(form, payload) {
+  if (!form?.length || !payload || typeof payload !== "object") return;
+  const type = normalizeShopType(payload.shopType);
+  const budget = normalizeBudgetOption(payload.shopBudget);
+  const count = clampRangeValue(payload.itemCount, 1, 60, 12);
+  const tier = clampRangeValue(payload.shopkeeperTier, 1, 4, 1);
+
+  form.find("select[name='shopType']").val(type);
+  form.find("select[name='shopBudget']").val(budget);
+  form.find("input[name='shopCount']").val(count);
+  form.find("select[name='shopkeeperTier']").val(String(tier));
+  form.find("input[name='shopAllowMagic']").prop("checked", !!payload.shopAllowMagic);
+
+  const folderId = String(payload.shopFolder || "").trim();
+  if (folderId) {
+    const options = form.find("select[name='shopFolder'] option").toArray();
+    const hasFolder = options.some((entry) => String(entry.value || "").trim() === folderId);
+    if (hasFolder) form.find("select[name='shopFolder']").val(folderId);
+  }
+}
+
+function parseShopImportPayload(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeImportedShopPayload(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeImportedShopPayload(parsed) {
+  if (parsed === null || parsed === undefined) return null;
+  if (Array.isArray(parsed)) {
+    return {
+      shopName: "",
+      shopType: "market",
+      shopBudget: "normal",
+      shopkeeperTier: 1,
+      shopAllowMagic: true,
+      itemCount: Math.max(1, Math.min(60, parsed.length || 1)),
+      shopFolder: "",
+      items: normalizeShopItemRefs(parsed)
+    };
+  }
+  if (typeof parsed !== "object") return null;
+
+  const shopBlock = parsed.shop && typeof parsed.shop === "object" ? parsed.shop : {};
+  const source = { ...parsed, ...shopBlock };
+  const itemSource =
+    source.items ??
+    source.inventory ??
+    source.stock ??
+    source.goods ??
+    source.products ??
+    [];
+  const items = normalizeShopItemRefs(itemSource);
+
+  const shopType = normalizeShopType(source.shopType || source.type || source.category);
+  const shopBudget = normalizeBudgetOption(source.shopBudget || source.budget);
+  const shopkeeperTier = clampRangeValue(
+    source.shopkeeperTier ?? source.tier ?? source.ownerTier,
+    1,
+    4,
+    1
+  );
+  const itemCount = clampRangeValue(source.itemCount ?? source.count ?? items.length, 1, 60, Math.max(1, items.length || 12));
+  const shopAllowMagic = parseBooleanLoose(source.shopAllowMagic ?? source.allowMagic, true);
+  const shopName = String(source.shopName || source.name || "").trim();
+  const shopFolder = String(source.shopFolder || source.folderId || "").trim();
+
+  const hasHints =
+    items.length > 0 ||
+    !!shopName ||
+    source.shopType !== undefined ||
+    source.type !== undefined ||
+    source.category !== undefined ||
+    source.shopBudget !== undefined ||
+    source.budget !== undefined ||
+    source.shopkeeperTier !== undefined ||
+    source.tier !== undefined ||
+    source.ownerTier !== undefined ||
+    source.itemCount !== undefined ||
+    source.count !== undefined ||
+    source.shopAllowMagic !== undefined ||
+    source.allowMagic !== undefined;
+  if (!hasHints) return null;
+
+  return {
+    shopName,
+    shopType,
+    shopBudget,
+    shopkeeperTier,
+    shopAllowMagic,
+    itemCount,
+    shopFolder,
+    items
+  };
+}
+
+function normalizeShopItemRefs(value, maxItems = 60, maxLength = 140) {
+  const input = value;
+  const list = [];
+  if (Array.isArray(input)) {
+    list.push(...input);
+  } else if (input && typeof input === "object") {
+    for (const groupValue of Object.values(input)) {
+      if (Array.isArray(groupValue)) list.push(...groupValue);
+    }
+  } else if (typeof input === "string") {
+    const split = String(input)
+      .split(/[\r\n,;]+/)
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean);
+    list.push(...split);
+  }
+
+  const out = [];
+  for (let i = 0; i < list.length && out.length < maxItems; i++) {
+    const entry = list[i];
+    if (entry === null || entry === undefined) continue;
+    if (typeof entry === "string") {
+      const clean = String(entry).replace(/\s+/g, " ").trim().slice(0, maxLength);
+      if (!clean) continue;
+      out.push({ name: clean, lookup: "", quantity: 1, priceGp: null });
+      continue;
+    }
+    if (typeof entry !== "object" || Array.isArray(entry)) continue;
+    const name = String(entry.name || entry.label || entry.item || entry.value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, maxLength);
+    const lookup = String(entry.lookup || entry.canonical || entry.english || entry.en || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, maxLength);
+    const quantity = clampRangeValue(entry.quantity ?? entry.qty ?? entry.count, 1, 9999, 1);
+    const priceGp = normalizeImportedItemPriceGp({
+      priceGp: entry.priceGp ?? entry.gp,
+      price: entry.price
+    });
+    const resolvedName = name || lookup;
+    if (!resolvedName) continue;
+    out.push({
+      name: resolvedName,
+      lookup: lookup || "",
+      quantity,
+      priceGp: Number.isFinite(priceGp) && priceGp > 0 ? priceGp : null
+    });
+  }
+
+  return out;
+}
+
+function parseBooleanLoose(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return fallback;
+  if (["1", "true", "yes", "y", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "n", "off"].includes(raw)) return false;
+  return fallback;
 }
 
 /**
@@ -1565,22 +2362,22 @@ async function copyTextToClipboard(text) {
 
 function openImportAiNpcDialog({ form, encounterModeInput, speciesEntries }) {
   new Dialog({
-    title: "Import ChatGPT NPC JSON",
+    title: i18nText("ui.dialog.importJsonTitle"),
     content: `
       <div style="display:flex;flex-direction:column;gap:0.5rem;">
         <p style="margin:0;font-size:0.85rem;opacity:0.85;">
-          Paste JSON from ChatGPT (single NPC object or array of NPC objects). Import uses current dialog options for folder/encounter and toggles.
+          ${i18nHtml("ui.dialog.importJsonDescription")}
         </p>
-        <textarea name="aiNpcJson" style="width:100%;min-height:18rem;" placeholder='{"name":"..."} or [{"name":"..."}, {...}]'></textarea>
+        <textarea name="aiNpcJson" style="width:100%;min-height:18rem;" placeholder='${i18nHtml("ui.dialog.importJsonPlaceholder")}'></textarea>
       </div>
     `,
     buttons: {
       import: {
-        label: "Import NPC",
+        label: i18nText("ui.dialog.buttonImportNpc"),
         callback: async (html) => {
           const rawJson = String(html.find("textarea[name='aiNpcJson']").val() || "").trim();
           if (!rawJson) {
-            ui.notifications?.warn("NPC Button: Paste NPC JSON first.");
+            ui.notifications?.warn(i18nText("ui.warnPasteJsonFirst"));
             return;
           }
           try {
@@ -1590,13 +2387,13 @@ function openImportAiNpcDialog({ form, encounterModeInput, speciesEntries }) {
             const reason = String(err?.message || "").trim();
             ui.notifications?.error(
               reason
-                ? `NPC Button: Import failed — ${reason}`
-                : "NPC Button: Import failed. JSON invalid or incompatible."
+                ? i18nFormat("ui.errorImportFailedWithReason", { reason })
+                : i18nText("ui.errorImportFailedGeneric")
             );
           }
         }
       },
-      cancel: { label: "Cancel" }
+      cancel: { label: i18nText("common.cancel") }
     },
     default: "import"
   }).render(true);
@@ -1607,15 +2404,15 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
   const parsed = parseLooseJsonObject(rawJson);
   const blueprints = normalizeImportedBlueprints(parsed);
   if (!blueprints.length) {
-    throw new Error("Imported JSON is empty.");
+    throw new Error(i18nText("ui.importErrorEmptyJson"));
   }
   if (!blueprints.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry))) {
-    throw new Error("Imported JSON must be an object or an array of objects.");
+    throw new Error(i18nText("ui.importErrorMustBeObjectOrArray"));
   }
 
   const formEl = form?.[0];
   if (!formEl) {
-    throw new Error("Form context is unavailable.");
+    throw new Error(i18nText("ui.importErrorFormUnavailable"));
   }
   const formData = new FormData(formEl);
   const encounterMode = String(formData.get("encounterMode") || String(encounterModeInput?.val() || "main"));
@@ -1648,15 +2445,15 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
     : null;
 
   const buildResults = [];
-  for (const source of blueprints) {
-    const parsedBlueprint = { ...source };
+  for (let index = 0; index < blueprints.length; index++) {
+    const source = blueprints[index];
+    const parsedBlueprint = validateAndNormalizeImportedBlueprint(source, index);
     parsedBlueprint.tier = Number(parsedBlueprint.tier || 0) > 0 ? parsedBlueprint.tier : tier;
     parsedBlueprint.budget = String(parsedBlueprint.budget || "").trim() || budgetInput;
     parsedBlueprint.includeLoot = includeLoot;
     parsedBlueprint.includeSecret = includeSecret;
     parsedBlueprint.includeHook = includeHook;
     parsedBlueprint.importantNpc = importantNpc;
-    applyImportedBlueprintDefaults(parsedBlueprint);
     if (!parsedBlueprint.className && parsedBlueprint.class) {
       parsedBlueprint.className = String(parsedBlueprint.class || "").trim();
     }
@@ -1666,7 +2463,7 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
 
     const result = await buildActorDataFromAiBlueprint(parsedBlueprint, folderId);
     if (!result?.actorData) {
-      throw new Error("Failed to build actor data from imported JSON.");
+      throw new Error(i18nText("ui.importErrorBuildActorData"));
     }
     buildResults.push({
       actorData: result.actorData,
@@ -1677,7 +2474,7 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
   }
 
   if (!buildResults.length) {
-    throw new Error("No NPC entries were parsed from imported JSON.");
+    throw new Error(i18nText("ui.importErrorNoEntriesParsed"));
   }
 
   const created = typeof Actor.createDocuments === "function"
@@ -1712,43 +2509,75 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
     const actor = created?.[0];
     if (resolved || missing) {
       ui.notifications?.info(
-        `Imported NPC: ${actor?.name || "Unnamed"} (compendium matches: ${resolved}, missing: ${missing}).`
+        i18nFormat("ui.infoImportedSingleWithCompendium", {
+          name: actor?.name || i18nText("common.unnamed"),
+          resolved,
+          missing
+        })
       );
       return;
     }
-    ui.notifications?.info(`Imported NPC: ${actor?.name || "Unnamed"}`);
+    ui.notifications?.info(i18nFormat("ui.infoImportedSingle", { name: actor?.name || i18nText("common.unnamed") }));
     return;
   }
 
   const count = (created || []).length;
   if (resolved || missing) {
     ui.notifications?.info(
-      `Imported ${count} NPCs (compendium matches: ${resolved}, missing: ${missing}).`
+      i18nFormat("ui.infoImportedManyWithCompendium", { count, resolved, missing })
     );
     return;
   }
-  ui.notifications?.info(`Imported ${count} NPCs.`);
+  ui.notifications?.info(i18nFormat("ui.infoImportedMany", { count }));
 }
 
 function normalizeImportedBlueprints(parsed) {
+  const isLikelyNpcBlueprint = (entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const npcSignals = [
+      "race",
+      "class",
+      "className",
+      "stats",
+      "abilities",
+      "ac",
+      "hp",
+      "tier",
+      "level",
+      "personality",
+      "description",
+      "speech",
+      "motivation",
+      "hook",
+      "secret",
+      "quirk",
+      "mannerism",
+      "rumor",
+      "features",
+      "spells",
+      "actions"
+    ];
+    return npcSignals.some((key) => key in entry);
+  };
+
   if (Array.isArray(parsed)) {
-    return parsed.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+    return parsed.filter((entry) => isLikelyNpcBlueprint(entry));
   }
   if (!parsed || typeof parsed !== "object") return [];
 
-  const containerKeys = ["npcs", "encounter", "actors", "items", "data", "results"];
+  const containerKeys = ["npcs", "encounter", "actors", "data", "results"];
   for (const key of containerKeys) {
     if (!Array.isArray(parsed[key])) continue;
-    const list = parsed[key].filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+    const list = parsed[key].filter((entry) => isLikelyNpcBlueprint(entry));
     if (list.length) return list;
   }
 
-  return [parsed];
+  return isLikelyNpcBlueprint(parsed) ? [parsed] : [];
 }
 
 function parseLooseJsonObject(rawText) {
   const text = normalizeImportJsonText(rawText);
-  if (!text) throw new Error("Empty JSON input.");
+  if (!text) throw new Error(i18nText("ui.importErrorEmptyInput"));
   try {
     return JSON.parse(text);
   } catch {
@@ -1768,8 +2597,8 @@ function parseLooseJsonObject(rawText) {
         if (fallbackParsed && Object.keys(fallbackParsed).length) {
           return fallbackParsed;
         }
-        const reason = String(parseErr?.message || "invalid JSON");
-        throw new Error(`invalid JSON (${reason})`);
+        const reason = String(parseErr?.message || i18nText("ui.importErrorInvalidJsonShort"));
+        throw new Error(i18nFormat("ui.importErrorInvalidJsonWithReason", { reason }));
       }
     }
   }
@@ -1826,41 +2655,272 @@ function repairCommonImportJsonIssues(rawText) {
   return text;
 }
 
-function applyImportedBlueprintDefaults(parsed) {
-  if (!parsed || typeof parsed !== "object") return;
+function validateAndNormalizeImportedBlueprint(input, entryIndex = 0) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(
+      i18nFormat("ui.importErrorSchemaValidation", {
+        index: entryIndex + 1,
+        details: i18nText("ui.importSchema.entryMustBeObject")
+      })
+    );
+  }
 
-  const listFields = ["features", "items", "spells", "actions"];
-  for (const field of listFields) {
-    const value = parsed[field];
-    if (Array.isArray(value)) {
-      parsed[field] = value
-        .map((entry) => String(entry || "").trim())
-        .filter(Boolean);
-      continue;
+  const normalized = { ...input };
+  const issues = [];
+  const addIssue = (messageKey, data = {}) => {
+    issues.push(i18nFormat(messageKey, data));
+  };
+
+  const requireString = (field) => {
+    if (!(field in normalized) || normalized[field] === null || normalized[field] === undefined) return;
+    if (typeof normalized[field] !== "string") {
+      addIssue("ui.importSchema.fieldMustBeString", { field });
+      return;
     }
-    if (typeof value === "string") {
-      const text = value.trim();
-      if (!text || /^(none|null|n\/a|[-–—,;]+)$/i.test(text)) {
-        parsed[field] = [];
+    normalized[field] = String(normalized[field]).trim();
+  };
+
+  const requireNumeric = (field) => {
+    if (!(field in normalized) || normalized[field] === null || normalized[field] === undefined) return;
+    const raw = normalized[field];
+    const num = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(num)) {
+      addIssue("ui.importSchema.fieldMustBeNumber", { field });
+      return;
+    }
+    normalized[field] = num;
+  };
+
+  const normalizeStrictStringArray = (value, fieldPath, maxItems = 20, maxLength = 120) => {
+    if (value === null || value === undefined) return [];
+    if (!Array.isArray(value)) {
+      addIssue("ui.importSchema.fieldMustBeStringArray", { field: fieldPath });
+      return [];
+    }
+    const out = [];
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item === null || item === undefined) continue;
+      if (typeof item !== "string") {
+        addIssue("ui.importSchema.arrayItemMustBeString", {
+          field: fieldPath,
+          index: i + 1
+        });
         continue;
       }
-      const list = text
+      const clean = String(item).replace(/\s+/g, " ").trim();
+      if (!clean) continue;
+      out.push(clean.slice(0, maxLength));
+      if (out.length >= maxItems) break;
+    }
+    return out;
+  };
+
+  const normalizeStrictItemRefArray = (value, fieldPath, maxItems = 20, maxLength = 120) => {
+    if (value === null || value === undefined) return [];
+    if (!Array.isArray(value)) {
+      addIssue("ui.importSchema.fieldMustBeStringArray", { field: fieldPath });
+      return [];
+    }
+
+    const out = [];
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item === null || item === undefined) continue;
+
+      if (typeof item === "string") {
+        const clean = String(item).replace(/\s+/g, " ").trim();
+        if (!clean) continue;
+        out.push({ name: clean.slice(0, maxLength), lookup: "" });
+        if (out.length >= maxItems) break;
+        continue;
+      }
+
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        addIssue("ui.importSchema.arrayItemMustBeString", {
+          field: fieldPath,
+          index: i + 1
+        });
+        continue;
+      }
+
+      const name = String(item.name || item.label || item.value || item.item || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, maxLength);
+      const lookup = String(item.lookup || item.canonical || item.canonicalName || item.english || item.en || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, maxLength);
+      const resolvedName = name || lookup;
+      if (!resolvedName) continue;
+
+      out.push({ name: resolvedName, lookup: lookup || "" });
+      if (out.length >= maxItems) break;
+    }
+
+    return out;
+  };
+
+  const normalizeAbilityBlock = (raw, fieldPath) => {
+    if (raw === null || raw === undefined) return null;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      addIssue("ui.importSchema.fieldMustBeObject", { field: fieldPath });
+      return null;
+    }
+    const aliases = {
+      STR: ["STR", "str"],
+      DEX: ["DEX", "dex"],
+      CON: ["CON", "con"],
+      INT: ["INT", "int"],
+      WIS: ["WIS", "wis"],
+      CHA: ["CHA", "cha"]
+    };
+    const out = {};
+    for (const [ability, keys] of Object.entries(aliases)) {
+      const key = keys.find((candidate) => raw[candidate] !== undefined && raw[candidate] !== null);
+      if (!key) continue;
+      const num = Number(raw[key]);
+      if (!Number.isFinite(num)) {
+        addIssue("ui.importSchema.abilityMustBeNumber", {
+          field: `${fieldPath}.${ability}`
+        });
+        continue;
+      }
+      out[ability] = num;
+    }
+    return out;
+  };
+
+  const validateItemsField = (value) => {
+    if (value === null || value === undefined) {
+      normalized.items = [];
+      return;
+    }
+    if (typeof value === "string") {
+      const list = String(value)
         .split(/[\r\n,;]+/)
         .map((entry) => String(entry || "").replace(/^"+|"+$/g, "").trim())
-        .filter((entry) => entry && !/^[-–—]+$/.test(entry));
-      parsed[field] = list.length ? list : [];
-      continue;
+        .filter(Boolean);
+      normalized.items = normalizeStrictItemRefArray(list, "items", 20, 100);
+      return;
     }
-    parsed[field] = [];
+    if (Array.isArray(value)) {
+      normalized.items = normalizeStrictItemRefArray(value, "items", 20, 100);
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      addIssue("ui.importSchema.itemsMustBeArrayOrObject");
+      normalized.items = [];
+      return;
+    }
+
+    const out = {};
+    const groups = [
+      "items",
+      "weapons",
+      "armor",
+      "equipment",
+      "consumables",
+      "loot",
+      "spells",
+      "features",
+      "actions"
+    ];
+    for (const key of groups) {
+      if (!(key in value)) continue;
+      if (["spells", "features", "actions"].includes(key)) {
+        out[key] = normalizeStrictStringArray(value[key], `items.${key}`, 20, 100);
+        continue;
+      }
+      out[key] = normalizeStrictItemRefArray(value[key], `items.${key}`, 20, 100);
+    }
+    normalized.items = out;
+  };
+
+  const validateCurrencyField = (value) => {
+    if (value === null || value === undefined) return;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      addIssue("ui.importSchema.fieldMustBeObject", { field: "currency" });
+      return;
+    }
+    const out = {};
+    for (const key of ["pp", "gp", "ep", "sp", "cp"]) {
+      if (!(key in value) || value[key] === null || value[key] === undefined) continue;
+      const num = Number(value[key]);
+      if (!Number.isFinite(num)) {
+        addIssue("ui.importSchema.currencyMustBeNumber", { field: `currency.${key}` });
+        continue;
+      }
+      out[key] = num;
+    }
+    normalized.currency = out;
+  };
+
+  for (const field of [
+    "name",
+    "race",
+    "class",
+    "className",
+    "background",
+    "alignment",
+    "speed",
+    "personality",
+    "description",
+    "speech",
+    "motivation",
+    "secret",
+    "hook",
+    "quirk",
+    "rumor",
+    "mannerism",
+    "budget",
+    "culture"
+  ]) {
+    requireString(field);
   }
 
-  if (typeof parsed.name !== "string" || !parsed.name.trim()) parsed.name = "Imported NPC";
-  if (typeof parsed.race !== "string") parsed.race = "";
-  if (!parsed.className && parsed.class) parsed.className = String(parsed.class || "").trim();
-
-  if (!parsed.stats && parsed.abilities) {
-    parsed.stats = parsed.abilities;
+  for (const field of ["tier", "level", "ac", "hp", "cr", "prof"]) {
+    requireNumeric(field);
   }
+
+  for (const field of ["features", "spells", "actions", "appearance"]) {
+    normalized[field] = normalizeStrictStringArray(normalized[field], field, 20, 140);
+  }
+
+  validateItemsField(normalized.items);
+  validateCurrencyField(normalized.currency);
+
+  const stats = normalizeAbilityBlock(normalized.stats, "stats");
+  if (stats) normalized.stats = stats;
+  else if (normalized.stats !== undefined) delete normalized.stats;
+
+  const abilities = normalizeAbilityBlock(normalized.abilities, "abilities");
+  if (abilities) normalized.abilities = abilities;
+  else if (normalized.abilities !== undefined) delete normalized.abilities;
+
+  if (!normalized.stats && abilities) {
+    normalized.stats = { ...abilities };
+  }
+
+  if (typeof normalized.name !== "string" || !normalized.name.trim()) {
+    normalized.name = i18nText("ui.importDefaultName");
+  }
+  if (typeof normalized.race !== "string") {
+    normalized.race = "";
+  }
+
+  if (issues.length) {
+    const details = issues.slice(0, 8).join("; ");
+    throw new Error(
+      i18nFormat("ui.importErrorSchemaValidation", {
+        index: entryIndex + 1,
+        details
+      })
+    );
+  }
+
+  return normalized;
 }
 
 function parseQuotedKeyValueFallback(rawText) {
@@ -2047,3 +3107,4 @@ function parseStatsFromLooseText(rawText) {
   }
   return stats;
 }
+

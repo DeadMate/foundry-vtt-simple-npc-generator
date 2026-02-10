@@ -4,6 +4,7 @@
  */
 
 import { MODULE_ID, COMPENDIUM_CACHE_FILE } from "./constants.js";
+import { tf } from "./i18n.js";
 
 /** Global data cache */
 export const DATA_CACHE = { loaded: false };
@@ -107,7 +108,7 @@ export function validateDataCache() {
 
   if (problems.length) {
     ui.notifications?.warn(
-      `NPC Button: Missing or empty data (${problems.join(", ")}). Using fallbacks where possible.`
+      tf("dataLoader.warnMissingData", { fields: problems.join(", ") })
     );
   }
 }

@@ -1,26 +1,26 @@
 <form>
   <div class="form-group">
-    <label>API Key</label>
+    <label>{{localize "npc-button-5e.openai.apiKeyForm.apiKeyLabel"}}</label>
     <div class="form-fields">
       <input type="password" name="apiKey" autocomplete="off" placeholder="sk-..." />
     </div>
     <p class="notes">
-      Stored only in this browser as a client setting for this GM user.
+      {{localize "npc-button-5e.openai.apiKeyForm.storedNote"}}
     </p>
   </div>
 
   {{#if hasKey}}
   <div class="form-group">
-    <label>Current Key</label>
+    <label>{{localize "npc-button-5e.openai.apiKeyForm.currentKeyLabel"}}</label>
     <div class="form-fields">
       <input type="text" value="{{keyPreview}}" disabled />
     </div>
-    <p class="notes">Only a masked preview is shown.</p>
+    <p class="notes">{{localize "npc-button-5e.openai.apiKeyForm.maskedNote"}}</p>
   </div>
   {{/if}}
 
   <div class="form-group">
-    <label>Clear saved key</label>
+    <label>{{localize "npc-button-5e.openai.apiKeyForm.clearSavedKeyLabel"}}</label>
     <div class="form-fields">
       <input type="checkbox" name="clearKey" />
     </div>

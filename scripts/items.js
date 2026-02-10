@@ -32,6 +32,7 @@ import {
 
 // Re-export from utils for backwards compatibility
 export { getItemPriceValue, pickByBudget } from "./utils.js";
+const PACK_LANGUAGE_CACHE = new Map();
 
 /**
  * Get pack names for a given type
@@ -44,17 +45,17 @@ export function getPacks(kind) {
     : COMPENDIUMS[kind];
   const packs = Array.from(new Set((base || []).filter(Boolean)));
   if (!packs.length) return [];
-  if (kind !== "spells") return packs;
-  return prioritizeSpellPacksByInterfaceLanguage(packs);
+  return prioritizePacksByInterfaceLanguage(packs, kind);
 }
 
 /**
- * Prioritize spell compendium packs by interface language,
+ * Prioritize compendium packs by interface language,
  * falling back to English packs when localized packs are unavailable.
  * @param {string[]} packs - Pack names
+ * @param {string} kind - Pack kind
  * @returns {string[]} Reordered packs
  */
-function prioritizeSpellPacksByInterfaceLanguage(packs) {
+function prioritizePacksByInterfaceLanguage(packs, kind) {
   const lang = getInterfaceLanguageCode();
   if (!lang) return packs;
 
@@ -63,8 +64,8 @@ function prioritizeSpellPacksByInterfaceLanguage(packs) {
   const other = [];
 
   for (const packName of packs) {
-    const packLang = detectPackLanguage(packName, "spells");
-    if (packLang === lang) {
+    const packLang = detectPackLanguage(packName, kind);
+    if (packLang === lang || packLang === "multi") {
       preferred.push(packName);
       continue;
     }
@@ -93,9 +94,14 @@ function getInterfaceLanguageCode() {
  * Detect pack language from collection/title metadata
  * @param {string} packName - Pack collection name
  * @param {string} kind - Pack kind
- * @returns {"ru"|"en"|"other"} Detected language
+ * @returns {"ru"|"en"|"multi"|"other"} Detected language
  */
 function detectPackLanguage(packName, kind) {
+  const cacheKey = `${String(packName || "")}|${String(kind || "")}`;
+  if (PACK_LANGUAGE_CACHE.has(cacheKey)) {
+    return PACK_LANGUAGE_CACHE.get(cacheKey);
+  }
+
   const collection = String(packName || "").toLowerCase();
   const pack = game.packs?.get(packName);
   const title = String(
@@ -106,16 +112,54 @@ function detectPackLanguage(packName, kind) {
   ).toLowerCase();
   const source = `${collection} ${title}`;
 
+  let detected = "other";
   if (/(^|[\s._/-])(ru|rus)([\s._/-]|$)|russian|рус|русск|кирил|cyril/i.test(source)) {
-    return "ru";
-  }
-  if (
+    detected = "ru";
+  } else if (
     (Array.isArray(COMPENDIUMS?.[kind]) && COMPENDIUMS[kind].includes(packName)) ||
     collection.startsWith("dnd5e.") ||
     /(^|[\s._/-])(en|eng)([\s._/-]|$)|english|англ/i.test(source)
   ) {
-    return "en";
+    detected = "en";
+  } else {
+    detected = detectPackLanguageByContent(packName);
   }
+
+  PACK_LANGUAGE_CACHE.set(cacheKey, detected);
+  return detected;
+}
+
+function detectPackLanguageByContent(packName) {
+  const packCache = DATA_CACHE.compendiumCache?.packs?.[packName];
+  if (!packCache) return "other";
+
+  const sampleNames = [];
+  const entries = Array.isArray(packCache.entries) ? packCache.entries : [];
+  for (const entry of entries) {
+    const name = String(entry?.name || "").trim();
+    if (name) sampleNames.push(name);
+    if (sampleNames.length >= 40) break;
+  }
+
+  if (sampleNames.length < 8) {
+    const docs = Object.values(packCache.documents || {});
+    for (const doc of docs) {
+      const name = String(doc?.name || "").trim();
+      if (name) sampleNames.push(name);
+      if (sampleNames.length >= 40) break;
+    }
+  }
+
+  if (!sampleNames.length) return "other";
+  let cyrillic = 0;
+  let latin = 0;
+  for (const name of sampleNames) {
+    if (/[а-яё]/i.test(name)) cyrillic += 1;
+    if (/[a-z]/i.test(name)) latin += 1;
+  }
+  if (cyrillic >= 4 && latin >= 4) return "multi";
+  if (cyrillic >= 4) return "ru";
+  if (latin >= 4) return "en";
   return "other";
 }
 

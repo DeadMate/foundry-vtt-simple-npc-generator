@@ -10,6 +10,7 @@ export const USE_COMPENDIUM_CACHE = true;
 export const CACHE_DOC_TYPES = new Set([
   "weapon",
   "equipment",
+  "tool",
   "loot",
   "consumable",
   "feat",

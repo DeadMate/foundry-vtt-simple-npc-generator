@@ -4,6 +4,7 @@
  */
 
 import { MODULE_ID } from "./constants.js";
+import { t } from "./i18n.js";
 
 const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-1-mini";
@@ -57,7 +58,7 @@ class OpenAiApiKeyConfig extends FormApplication {
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: `${MODULE_ID}-openai-api-key-config`,
-      title: "NPC Button: OpenAI API Key",
+      title: t("openai.apiKeyForm.title"),
       template: `modules/${MODULE_ID}/templates/openai-api-key.hbs`,
       width: 520,
       closeOnSubmit: true
@@ -78,13 +79,13 @@ class OpenAiApiKeyConfig extends FormApplication {
 
     if (inputKey) {
       await game.settings.set(MODULE_ID, SETTING_KEYS.apiKey, inputKey);
-      ui.notifications?.info("NPC Button: OpenAI API key saved for this browser.");
+      ui.notifications?.info(t("openai.apiKeyForm.saved"));
       return;
     }
 
     if (clearKey) {
       await game.settings.set(MODULE_ID, SETTING_KEYS.apiKey, "");
-      ui.notifications?.info("NPC Button: OpenAI API key cleared.");
+      ui.notifications?.info(t("openai.apiKeyForm.cleared"));
     }
   }
 }
@@ -102,8 +103,8 @@ export function openOpenAiApiKeyDialog() {
  */
 export function registerOpenAiSettings() {
   game.settings.register(MODULE_ID, SETTING_KEYS.enabled, {
-    name: "OpenAI flavor switch (legacy)",
-    hint: "Legacy compatibility switch. OpenAI is auto-enabled when an API key exists on this GM browser.",
+    name: `${MODULE_ID}.settings.openAiEnabled.name`,
+    hint: `${MODULE_ID}.settings.openAiEnabled.hint`,
     scope: "client",
     config: false,
     restricted: true,
@@ -112,8 +113,8 @@ export function registerOpenAiSettings() {
   });
 
   game.settings.register(MODULE_ID, SETTING_KEYS.model, {
-    name: "OpenAI model",
-    hint: "Model name used for NPC flavor generation.",
+    name: `${MODULE_ID}.settings.openAiModel.name`,
+    hint: `${MODULE_ID}.settings.openAiModel.hint`,
     scope: "world",
     config: true,
     restricted: true,
@@ -122,8 +123,8 @@ export function registerOpenAiSettings() {
   });
 
   game.settings.register(MODULE_ID, SETTING_KEYS.imageModel, {
-    name: "OpenAI image model",
-    hint: "Model name used for AI token image generation.",
+    name: `${MODULE_ID}.settings.openAiImageModel.name`,
+    hint: `${MODULE_ID}.settings.openAiImageModel.hint`,
     scope: "world",
     config: true,
     restricted: true,
@@ -132,8 +133,8 @@ export function registerOpenAiSettings() {
   });
 
   game.settings.register(MODULE_ID, SETTING_KEYS.baseUrl, {
-    name: "OpenAI API base URL",
-    hint: "Advanced: leave default unless using a compatible endpoint.",
+    name: `${MODULE_ID}.settings.openAiBaseUrl.name`,
+    hint: `${MODULE_ID}.settings.openAiBaseUrl.hint`,
     scope: "world",
     config: true,
     restricted: true,
@@ -142,8 +143,8 @@ export function registerOpenAiSettings() {
   });
 
   game.settings.register(MODULE_ID, SETTING_KEYS.maxBatch, {
-    name: "OpenAI max NPCs per generation",
-    hint: "Limits how many NPCs per click are sent to OpenAI to control cost and latency.",
+    name: `${MODULE_ID}.settings.openAiMaxBatch.name`,
+    hint: `${MODULE_ID}.settings.openAiMaxBatch.hint`,
     scope: "world",
     config: true,
     restricted: true,
@@ -159,9 +160,9 @@ export function registerOpenAiSettings() {
   });
 
   game.settings.registerMenu(MODULE_ID, "openAiApiKeyConfig", {
-    name: "OpenAI API Key",
-    label: "Set API Key",
-    hint: "Stored locally in this browser (client setting), never synced to the world database.",
+    name: `${MODULE_ID}.settings.openAiApiKeyMenu.name`,
+    label: `${MODULE_ID}.settings.openAiApiKeyMenu.label`,
+    hint: `${MODULE_ID}.settings.openAiApiKeyMenu.hint`,
     icon: "fas fa-key",
     type: OpenAiApiKeyConfig,
     restricted: true
@@ -211,12 +212,12 @@ export function getOpenAiMaxBatch() {
 export async function generateNpcFlavorWithOpenAi(npc) {
   if (!npc) return null;
   if (!game.user?.isGM) {
-    throw new Error("Only GM users can call OpenAI generation.");
+    throw new Error(t("openai.errorGmOnlyGeneration"));
   }
 
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
-    throw new Error("OpenAI API key is not configured.");
+    throw new Error(t("openai.errorApiKeyMissing"));
   }
 
   const model = String(game.settings?.get(MODULE_ID, SETTING_KEYS.model) || OPENAI_DEFAULT_MODEL).trim() || OPENAI_DEFAULT_MODEL;
@@ -266,7 +267,7 @@ export async function generateNpcFlavorWithOpenAi(npc) {
 
       const content = await requestOpenAiChatCompletion(endpoint, headers, requestData, controller?.signal);
       if (!content) {
-        throw new Error("OpenAI returned an empty response.");
+        throw new Error(t("openai.errorEmptyResponse"));
       }
 
       const parsed = parseJsonContent(content);
@@ -281,7 +282,7 @@ export async function generateNpcFlavorWithOpenAi(npc) {
     }
 
     if (bestFlavor) return bestFlavor;
-    throw new Error("OpenAI flavor quality validation failed.");
+    throw new Error(t("openai.errorFlavorValidationFailed"));
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
@@ -294,12 +295,12 @@ export async function generateNpcFlavorWithOpenAi(npc) {
  */
 export async function generateFullNpcWithOpenAi(context = {}) {
   if (!game.user?.isGM) {
-    throw new Error("Only GM users can call OpenAI generation.");
+    throw new Error(t("openai.errorGmOnlyGeneration"));
   }
 
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
-    throw new Error("OpenAI API key is not configured.");
+    throw new Error(t("openai.errorApiKeyMissing"));
   }
 
   const model = String(game.settings?.get(MODULE_ID, SETTING_KEYS.model) || OPENAI_DEFAULT_MODEL).trim() || OPENAI_DEFAULT_MODEL;
@@ -315,6 +316,8 @@ export async function generateFullNpcWithOpenAi(context = {}) {
     "Prioritize practical gameplay output: coherent stats, concrete personality, and real compendium-friendly item names.",
     `Write narrative fields in ${language.name}.`,
     `Prefer item/spell/feature/action names in ${language.name} if available; otherwise use English canonical names.`,
+    "For items, return array entries as objects with keys: name, lookup.",
+    "The lookup value must be an English canonical D&D item name for cross-language compendium matching.",
     "Use canonical D&D-style item, spell, and feature naming where possible.",
     "Do not include markdown or explanation text."
   ].join(" ");
@@ -336,7 +339,7 @@ export async function generateFullNpcWithOpenAi(context = {}) {
 
   const content = await requestOpenAiChatCompletion(endpoint, headers, requestData);
   if (!content) {
-    throw new Error("OpenAI returned an empty response.");
+    throw new Error(t("openai.errorEmptyResponse"));
   }
 
   const parsed = parseJsonContent(content);
@@ -379,7 +382,9 @@ export function buildManualEncounterNpcPrompt(context = {}) {
     "- Use double quotes for all keys and string values.",
     "- No trailing commas.",
     "- \"stats\" must be an object, not a string.",
-    "- \"features\", \"items\", \"spells\", \"actions\" must always be arrays (use [] if empty).",
+    "- \"features\", \"spells\", \"actions\" must always be arrays of strings (use [] if empty).",
+    "- \"items\" must always be an array where each item is an object: {\"name\":\"...\", \"lookup\":\"...\"}.",
+    "- \"lookup\" must be English canonical item name (if unknown, duplicate \"name\").",
     "- If unknown: use \"None\", 0, or [] (never null).",
     "- After the required keys, also include these extra keys in this order for richer import:",
     "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
@@ -416,12 +421,12 @@ export function buildManualEncounterNpcPrompt(context = {}) {
 export async function generateNpcTokenImageWithOpenAi(npc) {
   if (!npc) return null;
   if (!game.user?.isGM) {
-    throw new Error("Only GM users can call OpenAI token generation.");
+    throw new Error(t("openai.errorGmOnlyTokenGeneration"));
   }
 
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
-    throw new Error("OpenAI API key is not configured.");
+    throw new Error(t("openai.errorApiKeyMissing"));
   }
 
   const model =
@@ -447,7 +452,7 @@ export async function generateNpcTokenImageWithOpenAi(npc) {
   const imagePayload = await requestOpenAiImageGeneration(endpoint, headers, requestData);
   const file = await imagePayloadToFile(imagePayload, buildTokenFilename(npc));
   if (!file) {
-    throw new Error("OpenAI image response did not contain usable image data.");
+    throw new Error(t("openai.errorNoUsableImageData"));
   }
 
   const worldId = sanitizePathSegment(game.world?.id || "world");
@@ -491,7 +496,9 @@ function buildFullNpcPrompt(context = {}, options = {}) {
     "- Use double quotes for all keys and string values.",
     "- No trailing commas.",
     "- \"stats\" must be an object, not a string.",
-    "- \"features\", \"items\", \"spells\", \"actions\" must always be arrays (use [] if empty).",
+    "- \"features\", \"spells\", \"actions\" must always be arrays of strings (use [] if empty).",
+    "- \"items\" must always be an array where each item is an object: {\"name\":\"...\", \"lookup\":\"...\"}.",
+    "- \"lookup\" must be English canonical item name (if unknown, duplicate \"name\").",
     "- If unknown: use \"None\", 0, or [] (never null).",
     "- After the required keys, also include these extra keys in this order for richer import:",
     "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
@@ -540,7 +547,7 @@ function getFullNpcSchemaLines() {
     "  \"hp\": 0,",
     "  \"speed\": \"30 ft.\",",
     "  \"features\": [\"...\"],",
-    "  \"items\": [\"...\"],",
+    "  \"items\": [{\"name\": \"...\", \"lookup\": \"English canonical name\"}],",
     "  \"spells\": [\"...\"],",
     "  \"actions\": [\"...\"],",
     "  \"personality\": \"...\",",
@@ -587,8 +594,11 @@ function normalizeAiFullNpc(data, context = {}) {
   const mannerism = ensureSentence(sanitizeFlavorText(source.mannerism, 220) || personality);
 
   const stats = source.stats && typeof source.stats === "object" ? source.stats : source.abilities;
-  const flatItems = normalizeStringArray(source.items, 12, 80);
-  const groupedItems = source.items && typeof source.items === "object" ? source.items : {};
+  const flatItems = normalizeItemReferenceArray(source.items, 12, 80);
+  const groupedItems =
+    source.items && typeof source.items === "object" && !Array.isArray(source.items)
+      ? source.items
+      : {};
   const spells = uniqueStrings(
     normalizeStringArray(groupedItems.spells || source.spells, 12, 80),
     12
@@ -636,25 +646,25 @@ function normalizeAiFullNpc(data, context = {}) {
     description: description || null,
     actions,
     currency: normalizeCurrency(source.currency),
-    items: {
-      weapons: uniqueStrings([
-        ...normalizeStringArray(groupedItems.weapons || source.weapons, 6, 80),
+      items: {
+      weapons: uniqueItemReferences([
+        ...normalizeItemReferenceArray(groupedItems.weapons || source.weapons, 6, 80),
         ...guessedGroups.weapons
       ], 6),
-      armor: uniqueStrings([
-        ...normalizeStringArray(groupedItems.armor || source.armor, 4, 80),
+      armor: uniqueItemReferences([
+        ...normalizeItemReferenceArray(groupedItems.armor || source.armor, 4, 80),
         ...guessedGroups.armor
       ], 4),
-      equipment: uniqueStrings([
-        ...normalizeStringArray(groupedItems.equipment || source.equipment, 10, 80),
+      equipment: uniqueItemReferences([
+        ...normalizeItemReferenceArray(groupedItems.equipment || source.equipment, 10, 80),
         ...guessedGroups.equipment
       ], 10),
-      consumables: uniqueStrings([
-        ...normalizeStringArray(groupedItems.consumables || source.consumables, 6, 80),
+      consumables: uniqueItemReferences([
+        ...normalizeItemReferenceArray(groupedItems.consumables || source.consumables, 6, 80),
         ...guessedGroups.consumables
       ], 6),
-      loot: uniqueStrings([
-        ...normalizeStringArray(groupedItems.loot || source.loot, 8, 80),
+      loot: uniqueItemReferences([
+        ...normalizeItemReferenceArray(groupedItems.loot || source.loot, 8, 80),
         ...guessedGroups.loot
       ], 8),
       spells,
@@ -802,33 +812,38 @@ function groupFlatItems(flatItems) {
     consumables: [],
     loot: []
   };
-  for (const itemName of flatItems || []) {
-    const lower = String(itemName || "").toLowerCase();
+  for (const itemRef of flatItems || []) {
+    const label = getItemReferenceLabel(itemRef);
+    const lower = String(label || "").toLowerCase();
     if (!lower) continue;
+    if (/(ammo|arrows?|bolts?|crossbow bolts?)/i.test(lower)) {
+      out.consumables.push(itemRef);
+      continue;
+    }
     if (/(sword|axe|mace|hammer|bow|crossbow|dagger|spear|halberd|staff|rapier|whip|javelin|flail)/i.test(lower)) {
-      out.weapons.push(itemName);
+      out.weapons.push(itemRef);
       continue;
     }
     if (/(armor|mail|plate|shield|helm|gauntlet|breastplate|leather|chain)/i.test(lower)) {
-      out.armor.push(itemName);
+      out.armor.push(itemRef);
       continue;
     }
     if (/(potion|elixir|scroll|ammo|arrows|bolts|kit|healer|ration)/i.test(lower)) {
-      out.consumables.push(itemName);
+      out.consumables.push(itemRef);
       continue;
     }
     if (/(gem|coin|ring|necklace|trinket|relic|idol|token)/i.test(lower)) {
-      out.loot.push(itemName);
+      out.loot.push(itemRef);
       continue;
     }
-    out.equipment.push(itemName);
+    out.equipment.push(itemRef);
   }
   return {
-    weapons: uniqueStrings(out.weapons, 6),
-    armor: uniqueStrings(out.armor, 4),
-    equipment: uniqueStrings(out.equipment, 10),
-    consumables: uniqueStrings(out.consumables, 6),
-    loot: uniqueStrings(out.loot, 8)
+    weapons: uniqueItemReferences(out.weapons, 6),
+    armor: uniqueItemReferences(out.armor, 4),
+    equipment: uniqueItemReferences(out.equipment, 10),
+    consumables: uniqueItemReferences(out.consumables, 6),
+    loot: uniqueItemReferences(out.loot, 8)
   };
 }
 
@@ -847,6 +862,65 @@ function uniqueStrings(values, maxItems = 10) {
   return out;
 }
 
+function normalizeItemReferenceArray(raw, maxItems = 6, maxLength = 80) {
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object"
+      ? []
+      : String(raw || "")
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+  const out = [];
+  for (const value of list) {
+    const normalized = normalizeItemReference(value, maxLength);
+    if (!normalized) continue;
+    out.push(normalized);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+function normalizeItemReference(raw, maxLength = 80) {
+  if (typeof raw === "string") {
+    const name = sanitizeFlavorText(raw, maxLength);
+    if (!name) return null;
+    return { name, lookup: "" };
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+
+  const name = sanitizeFlavorText(raw.name || raw.label || raw.value || raw.item || "", maxLength);
+  const lookup = sanitizeFlavorText(
+    raw.lookup || raw.canonical || raw.canonicalName || raw.english || raw.en || "",
+    maxLength
+  );
+  const resolvedName = name || lookup;
+  if (!resolvedName) return null;
+  return { name: resolvedName, lookup: lookup || "" };
+}
+
+function uniqueItemReferences(values, maxItems = 10) {
+  const out = [];
+  const seen = new Set();
+  for (const rawValue of values || []) {
+    const normalized = normalizeItemReference(rawValue, 120);
+    if (!normalized) continue;
+    const key = `${normalized.name.toLowerCase()}|${normalized.lookup.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+function getItemReferenceLabel(itemRef) {
+  if (!itemRef || typeof itemRef !== "object") {
+    return sanitizeFlavorText(itemRef, 120);
+  }
+  return sanitizeFlavorText(itemRef.lookup || itemRef.name || "", 120);
+}
+
 function normalizeStringArray(raw, maxItems = 6, maxLength = 80) {
   const list = Array.isArray(raw)
     ? raw
@@ -855,7 +929,13 @@ function normalizeStringArray(raw, maxItems = 6, maxLength = 80) {
       .map((part) => part.trim())
       .filter(Boolean);
   return list
-    .map((value) => sanitizeFlavorText(value, maxLength))
+    .map((value) => {
+      const normalized =
+        value && typeof value === "object" && !Array.isArray(value)
+          ? value.name || value.lookup || value.label || value.value || ""
+          : value;
+      return sanitizeFlavorText(normalized, maxLength);
+    })
     .filter(Boolean)
     .slice(0, maxItems);
 }
@@ -945,7 +1025,7 @@ async function requestOpenAiImageGeneration(endpoint, headers, requestData) {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    const reason = cleanErrorText(errorText) || response.statusText || "OpenAI image request failed";
+    const reason = cleanErrorText(errorText) || response.statusText || t("openai.errorImageRequestFailed");
     throw new Error(`${response.status}: ${reason}`);
   }
 
@@ -965,7 +1045,7 @@ async function imagePayloadToFile(imagePayload, fileName) {
 
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Failed to download generated image: ${response.status}`);
+    throw new Error(`${t("openai.errorDownloadGeneratedImage")}: ${response.status}`);
   }
   const blob = await response.blob();
   return new File([blob], fileName, { type: blob.type || "image/png" });
@@ -1018,14 +1098,21 @@ function getInterfaceLanguageContext() {
   const raw = String(game.i18n?.lang || coreLang || "en").trim().toLowerCase();
   const codeMatch = raw.match(/^[a-z]{2}/);
   const code = codeMatch ? codeMatch[0] : "en";
+  let localizedName = "";
+  try {
+    const display = new Intl.DisplayNames([raw, "en"], { type: "language" });
+    localizedName = String(display.of(code) || "").trim();
+  } catch {
+    // no-op, fallback below
+  }
   const nameByCode = {
-    ru: "Russian",
-    en: "English"
+    ru: t("openai.language.russian"),
+    en: t("openai.language.english")
   };
   return {
     code,
     raw,
-    name: nameByCode[code] || raw || "English"
+    name: localizedName || nameByCode[code] || raw || t("openai.language.english")
   };
 }
 
@@ -1043,7 +1130,7 @@ function parseJsonContent(content) {
     const firstBrace = content.indexOf("{");
     const lastBrace = content.lastIndexOf("}");
     if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-      throw new Error("Failed to parse OpenAI JSON response.");
+      throw new Error(t("openai.errorParseJsonResponse"));
     }
     const sliced = content.slice(firstBrace, lastBrace + 1);
     return JSON.parse(sliced);
@@ -1323,10 +1410,10 @@ async function requestOpenAiChatCompletion(endpoint, headers, requestData, signa
       return String(payload?.choices?.[0]?.message?.content || "").trim();
     }
     const secondErrText = await secondResponse.text().catch(() => "");
-    const secondReason = cleanErrorText(secondErrText) || secondResponse.statusText || "OpenAI request failed";
+    const secondReason = cleanErrorText(secondErrText) || secondResponse.statusText || t("openai.errorRequestFailed");
     throw new Error(`${secondResponse.status}: ${secondReason}`);
   }
 
-  const reason = firstErrReason || firstResponse.statusText || "OpenAI request failed";
+  const reason = firstErrReason || firstResponse.statusText || t("openai.errorRequestFailed");
   throw new Error(`${firstResponse.status}: ${reason}`);
 }

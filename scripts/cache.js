@@ -11,10 +11,86 @@ import {
   CACHE_DOC_TYPES
 } from "./constants.js";
 import { DATA_CACHE } from "./data-loader.js";
+import { t, tf } from "./i18n.js";
 import { pickRandom, getSearchStrings, getItemPriceValue, pickByBudget } from "./utils.js";
 
 /** Set of pack names that have been warned about missing cache */
 const cacheWarnings = new Set();
+const CACHE_BUILD_MAX_CONCURRENCY = 4;
+const CACHE_LOOKUP_INDEX = {
+  source: null,
+  docsByPack: new Map(),
+  searchableByPack: new Map(),
+  nameMapByPack: new Map()
+};
+
+function ensureLookupIndexState() {
+  const source = DATA_CACHE.compendiumCache?.packs || null;
+  if (CACHE_LOOKUP_INDEX.source === source) return source;
+  CACHE_LOOKUP_INDEX.source = source;
+  CACHE_LOOKUP_INDEX.docsByPack.clear();
+  CACHE_LOOKUP_INDEX.searchableByPack.clear();
+  CACHE_LOOKUP_INDEX.nameMapByPack.clear();
+  return source;
+}
+
+function getPackCachedDocs(packName) {
+  ensureLookupIndexState();
+  if (CACHE_LOOKUP_INDEX.docsByPack.has(packName)) {
+    return CACHE_LOOKUP_INDEX.docsByPack.get(packName);
+  }
+  const docs = Object.values(DATA_CACHE.compendiumCache?.packs?.[packName]?.documents || {});
+  CACHE_LOOKUP_INDEX.docsByPack.set(packName, docs);
+  return docs;
+}
+
+function getPackSearchableEntries(packName) {
+  ensureLookupIndexState();
+  if (CACHE_LOOKUP_INDEX.searchableByPack.has(packName)) {
+    return CACHE_LOOKUP_INDEX.searchableByPack.get(packName);
+  }
+  const docs = getPackCachedDocs(packName);
+  const entries = docs.map((doc) => ({ doc, search: getSearchStrings(doc) }));
+  CACHE_LOOKUP_INDEX.searchableByPack.set(packName, entries);
+  return entries;
+}
+
+function getPackNameMap(packName) {
+  ensureLookupIndexState();
+  if (CACHE_LOOKUP_INDEX.nameMapByPack.has(packName)) {
+    return CACHE_LOOKUP_INDEX.nameMapByPack.get(packName);
+  }
+  const map = new Map();
+  for (const entry of getPackSearchableEntries(packName)) {
+    for (const token of entry.search || []) {
+      if (!token || map.has(token)) continue;
+      map.set(token, entry.doc);
+    }
+  }
+  CACHE_LOOKUP_INDEX.nameMapByPack.set(packName, map);
+  return map;
+}
+
+function getDocsAndMatchesByKeywords(packs, keywords, predicate) {
+  const docs = [];
+  const matches = [];
+  const normalized = (keywords || []).map((k) => String(k || "").toLowerCase().trim()).filter(Boolean);
+
+  for (const packName of packs || []) {
+    for (const entry of getPackSearchableEntries(packName)) {
+      const doc = entry.doc;
+      if (!doc) continue;
+      if (predicate && !predicate(doc)) continue;
+      docs.push(doc);
+      if (!normalized.length) continue;
+      if (normalized.some((key) => (entry.search || []).some((token) => token.includes(key)))) {
+        matches.push(doc);
+      }
+    }
+  }
+
+  return { docs, matches };
+}
 
 /**
  * Warn once about a missing cache for a pack
@@ -74,13 +150,11 @@ export function getCachedDoc(packName, id) {
  * @returns {Object[]} Array of cached documents
  */
 export function getCachedDocsForPacks(packs) {
-  const cache = DATA_CACHE.compendiumCache;
-  if (!cache?.packs) return [];
+  ensureLookupIndexState();
+  if (!DATA_CACHE.compendiumCache?.packs) return [];
   const out = [];
-  for (const packName of packs) {
-    const docs = cache.packs[packName]?.documents;
-    if (!docs) continue;
-    for (const doc of Object.values(docs)) out.push(doc);
+  for (const packName of packs || []) {
+    out.push(...getPackCachedDocs(packName));
   }
   return out;
 }
@@ -94,8 +168,15 @@ export function getCachedDocsForPacks(packs) {
 export function getCachedDocByName(packs, name) {
   const target = String(name || "").trim().toLowerCase();
   if (!target) return null;
-  const docs = getCachedDocsForPacks(packs);
-  return docs.find((doc) => getSearchStrings(doc).includes(target)) || null;
+  const candidates = new Set([target, ...getSearchStrings({ name: target })]);
+  for (const packName of packs || []) {
+    const nameMap = getPackNameMap(packName);
+    for (const token of candidates) {
+      if (!nameMap.has(token)) continue;
+      return nameMap.get(token) || null;
+    }
+  }
+  return null;
 }
 
 /**
@@ -106,14 +187,9 @@ export function getCachedDocByName(packs, name) {
  * @returns {Object|null} Random matching document or null
  */
 export function getRandomCachedDocByKeywords(packs, keywords, predicate) {
-  const normalized = (keywords || []).map((k) => k.toLowerCase()).filter(Boolean);
-  const docs = getCachedDocsForPacks(packs).filter((doc) => !predicate || predicate(doc));
+  const { docs, matches } = getDocsAndMatchesByKeywords(packs, keywords, predicate);
   if (!docs.length) return null;
-  if (!normalized.length) return pickRandom(docs);
-  const matches = docs.filter((doc) => {
-    const haystack = getSearchStrings(doc);
-    return normalized.some((k) => haystack.some((h) => h.includes(k)));
-  });
+  if (!keywords?.length) return pickRandom(docs);
   return matches.length ? pickRandom(matches) : pickRandom(docs);
 }
 
@@ -127,17 +203,13 @@ export function getRandomCachedDocByKeywords(packs, keywords, predicate) {
  * @returns {Object|null} Random matching document or null
  */
 export function getRandomCachedDocByKeywordsWithBudget(packs, keywords, predicate, budget, allowMagic = false) {
-  const normalized = (keywords || []).map((k) => k.toLowerCase()).filter(Boolean);
-  let docs = getCachedDocsForPacks(packs).filter((doc) => !predicate || predicate(doc));
-  if (!docs.length) return null;
-  if (normalized.length) {
-    docs = docs.filter((doc) => {
-      const haystack = getSearchStrings(doc);
-      return normalized.some((k) => haystack.some((h) => h.includes(k)));
-    });
-  }
-  if (!docs.length) return null;
-  return pickByBudget(docs, budget, allowMagic, getItemPriceValue);
+  const { docs, matches } = getDocsAndMatchesByKeywords(packs, keywords, predicate);
+  let pool = docs;
+  if (keywords?.length && matches.length) pool = matches;
+  if (!pool.length) return null;
+  pool = pool.slice();
+  if (!pool.length) return null;
+  return pickByBudget(pool, budget, allowMagic, getItemPriceValue);
 }
 
 /**
@@ -219,7 +291,14 @@ export function buildPacksByType(packs) {
 
     for (const entry of entries) {
       if (entry.type === "weapon" || entry.type === "equipment") hasWeapon = true;
-      if (entry.type === "loot" || entry.type === "consumable" || entry.type === "equipment") hasLoot = true;
+      if (
+        entry.type === "loot" ||
+        entry.type === "consumable" ||
+        entry.type === "equipment" ||
+        entry.type === "tool"
+      ) {
+        hasLoot = true;
+      }
       if (entry.type === "spell") hasSpell = true;
       if (entry.type === "feat") hasFeat = true;
     }
@@ -248,7 +327,7 @@ export function buildPacksByType(packs) {
  */
 export async function buildCompendiumCache() {
   if (!game.user?.isGM) {
-    ui.notifications?.warn("NPC Button: GM only.");
+    ui.notifications?.warn(t("cache.warnGmOnly"));
     return;
   }
 
@@ -274,31 +353,87 @@ export async function buildCompendiumCache() {
     packsByType: {}
   };
 
+  const queuedPacks = [];
   for (const packName of packNames) {
     const pack = game.packs?.get(packName);
     if (!pack) {
-      ui.notifications?.warn(`NPC Button: pack not found: ${packName}`);
+      ui.notifications?.warn(tf("cache.warnPackNotFound", { packName }));
       continue;
     }
-    const index = await pack.getIndex({ fields });
-    const documents = {};
-    try {
-      const docs = await pack.getDocuments();
-      for (const doc of docs) {
-        if (CACHE_DOC_TYPES.has(doc.type)) {
-          documents[doc.id] = doc.toObject();
-        }
-      }
-    } catch (err) {
-      console.warn(`NPC Button: failed to read documents for ${packName}`, err);
-    }
-    output.packs[pack.collection] = {
-      label: pack.title,
-      documentName: pack.documentName,
-      entries: index,
-      documents
-    };
+    queuedPacks.push({ packName, pack });
   }
+
+  if (!queuedPacks.length) {
+    ui.notifications?.warn(t("cache.warnNoPacksToBuild"));
+    return;
+  }
+
+  queuedPacks.sort((a, b) => a.packName.localeCompare(b.packName));
+  ui.notifications?.info(tf("cache.infoBuildStarted", { count: queuedPacks.length }));
+
+  const progressStep = Math.max(1, Math.ceil(queuedPacks.length / 5));
+  let nextProgressAt = progressStep;
+  let completed = 0;
+
+  const notifyProgress = (force = false) => {
+    if (!force && completed < nextProgressAt) return;
+    ui.notifications?.info(
+      tf("cache.infoBuildProgress", { done: completed, total: queuedPacks.length })
+    );
+    while (nextProgressAt <= completed) nextProgressAt += progressStep;
+  };
+
+  const queue = queuedPacks.slice();
+  const results = [];
+  const workerCount = Math.min(CACHE_BUILD_MAX_CONCURRENCY, queue.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (queue.length) {
+      const entry = queue.shift();
+      if (!entry) continue;
+      const { packName, pack } = entry;
+
+      let index = [];
+      try {
+        index = await pack.getIndex({ fields });
+      } catch (err) {
+        console.warn(`NPC Button: failed to read index for ${packName}`, err);
+      }
+
+      const documents = {};
+      try {
+        const docs = await pack.getDocuments();
+        for (const doc of docs) {
+          if (CACHE_DOC_TYPES.has(doc.type)) {
+            documents[doc.id] = doc.toObject();
+          }
+        }
+      } catch (err) {
+        console.warn(`NPC Button: failed to read documents for ${packName}`, err);
+      }
+
+      results.push({
+        collection: pack.collection,
+        data: {
+          label: pack.title,
+          documentName: pack.documentName,
+          entries: index,
+          documents
+        }
+      });
+
+      completed += 1;
+      notifyProgress(false);
+    }
+  });
+
+  await Promise.all(workers);
+  notifyProgress(true);
+
+  for (const entry of results) {
+    if (!entry?.collection || !entry?.data) continue;
+    output.packs[entry.collection] = entry.data;
+  }
+
   output.packsByType = buildPacksByType(output.packs);
 
   const data = JSON.stringify(output, null, 2);
@@ -311,9 +446,9 @@ export async function buildCompendiumCache() {
     DATA_CACHE.compendiumCache = output;
     DATA_CACHE.compendiumLists = output.packsByType;
     DATA_CACHE.packIndex = new Map();
-    ui.notifications?.info("NPC Button: Compendium cache built.");
+    ui.notifications?.info(t("cache.infoBuilt"));
   } catch (err) {
     console.error(err);
-    ui.notifications?.error("NPC Button: Failed to write compendium cache.");
+    ui.notifications?.error(t("cache.errorWriteFailed"));
   }
 }
