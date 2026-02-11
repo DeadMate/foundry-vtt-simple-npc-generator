@@ -316,6 +316,9 @@ export async function generateFullNpcWithOpenAi(context = {}) {
     "Prioritize practical gameplay output: coherent stats, concrete personality, and real compendium-friendly item names.",
     `Write narrative fields in ${language.name}.`,
     `Prefer item/spell/feature/action names in ${language.name} if available; otherwise use English canonical names.`,
+    "Do not list basic weapon attacks as features.",
+    "For actions, include only non-weapon special actions; if none, return [].",
+    "If unsure whether a feature/action exists in compendiums, return [] instead of inventing names.",
     "For items, return array entries as objects with keys: name, lookup.",
     "The lookup value must be an English canonical D&D item name for cross-language compendium matching.",
     "Use canonical D&D-style item, spell, and feature naming where possible.",
@@ -385,6 +388,9 @@ export function buildManualEncounterNpcPrompt(context = {}) {
     "- \"features\", \"spells\", \"actions\" must always be arrays of strings (use [] if empty).",
     "- \"items\" must always be an array where each item is an object: {\"name\":\"...\", \"lookup\":\"...\"}.",
     "- \"lookup\" must be English canonical item name (if unknown, duplicate \"name\").",
+    "- Do not put weapon-specific attack lines into \"features\".",
+    "- \"actions\" should include only named non-weapon special actions; otherwise use [].",
+    "- If unsure a feature/action exists in compendiums, use [] instead of invented names.",
     "- If unknown: use \"None\", 0, or [] (never null).",
     "- After the required keys, also include these extra keys in this order for richer import:",
     "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
@@ -499,6 +505,9 @@ function buildFullNpcPrompt(context = {}, options = {}) {
     "- \"features\", \"spells\", \"actions\" must always be arrays of strings (use [] if empty).",
     "- \"items\" must always be an array where each item is an object: {\"name\":\"...\", \"lookup\":\"...\"}.",
     "- \"lookup\" must be English canonical item name (if unknown, duplicate \"name\").",
+    "- Do not put weapon-specific attack lines into \"features\".",
+    "- \"actions\" should include only named non-weapon special actions; otherwise use [].",
+    "- If unsure a feature/action exists in compendiums, use [] instead of invented names.",
     "- If unknown: use \"None\", 0, or [] (never null).",
     "- After the required keys, also include these extra keys in this order for richer import:",
     "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
@@ -668,7 +677,7 @@ function normalizeAiFullNpc(data, context = {}) {
         ...guessedGroups.loot
       ], 8),
       spells,
-      features: uniqueStrings([...features, ...actions], 12)
+      features: uniqueStrings(features, 12)
     },
     includeLoot: context.includeLoot !== false,
     includeSecret,

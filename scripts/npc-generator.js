@@ -438,11 +438,13 @@ export async function buildActorData(npc, folderId = null) {
  * Build actor data from AI full blueprint (resolves named content via compendiums)
  * @param {Object} blueprint - AI full NPC blueprint
  * @param {string|null} folderId - Folder ID
- * @returns {Promise<{actorData: Object, resolvedItems: number, missingItems: number}>}
+ * @param {Object} [options]
+ * @param {boolean} [options.collectMatchDetails=false] - Include per-item compendium match details
+ * @returns {Promise<{actorData: Object, resolvedItems: number, missingItems: number, matchDetails: Object[]}>}
  */
-export async function buildActorDataFromAiBlueprint(blueprint, folderId = null) {
+export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, options = {}) {
   const npc = normalizeAiBlueprintForActor(blueprint);
-  const { items, resolvedItems, missingItems } = await resolveAiBlueprintItems(npc);
+  const { items, resolvedItems, missingItems, matchDetails } = await resolveAiBlueprintItems(npc, options);
 
   if (!items.some((item) => String(item?.type || "").toLowerCase() === "weapon")) {
     const fallbackWeapon = await buildWeaponItem(npc);
@@ -507,7 +509,7 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null) 
     items
   };
 
-  return { actorData, resolvedItems, missingItems };
+  return { actorData, resolvedItems, missingItems, matchDetails };
 }
 
 function normalizeAiBlueprintForActor(blueprint) {
@@ -577,45 +579,53 @@ function normalizeAiBlueprintForActor(blueprint) {
   };
 }
 
-async function resolveAiBlueprintItems(npc) {
+async function resolveAiBlueprintItems(npc, options = {}) {
   const aiItems = npc.aiItems || {};
   const budget = npc.budget || "normal";
+  const collectMatchDetails = options?.collectMatchDetails === true;
   const allGearPacks = uniquePackNames([...getPacks("weapons"), ...getPacks("loot")]);
   const featurePacks = uniquePackNames([...getPacks("classFeatures"), ...getPacks("features")]);
   const groups = [
     {
+      key: "weapons",
       names: aiItems.weapons,
       packs: getPacks("weapons"),
       allowedTypes: ["weapon", "equipment"],
       equip: true
     },
     {
+      key: "armor",
       names: aiItems.armor,
       packs: allGearPacks,
       allowedTypes: ["equipment"],
       equip: true
     },
     {
+      key: "equipment",
       names: aiItems.equipment,
       packs: allGearPacks,
-      allowedTypes: ["equipment", "loot", "consumable", "tool"]
+      allowedTypes: ["weapon", "equipment", "loot", "consumable", "tool"]
     },
     {
+      key: "consumables",
       names: aiItems.consumables,
       packs: allGearPacks,
-      allowedTypes: ["consumable", "loot", "equipment", "tool"]
+      allowedTypes: ["weapon", "consumable", "loot", "equipment", "tool"]
     },
     {
+      key: "loot",
       names: aiItems.loot,
       packs: allGearPacks,
-      allowedTypes: ["loot", "consumable", "equipment", "tool"]
+      allowedTypes: ["weapon", "loot", "consumable", "equipment", "tool"]
     },
     {
+      key: "spells",
       names: aiItems.spells,
       packs: getPacks("spells"),
       allowedTypes: ["spell"]
     },
     {
+      key: "features",
       names: aiItems.features,
       packs: featurePacks,
       allowedTypes: ["feat"],
@@ -625,6 +635,7 @@ async function resolveAiBlueprintItems(npc) {
 
   const items = [];
   const addedNames = new Set();
+  const matchDetails = [];
   let resolvedItems = 0;
   let missingItems = 0;
 
@@ -633,21 +644,60 @@ async function resolveAiBlueprintItems(npc) {
       const itemRef = normalizeAiItemReference(rawEntry);
       if (!itemRef?.name) continue;
 
-      const item = await resolveAiNamedItem(itemRef, group, budget);
-      if (!item) {
+      const resolved = await resolveAiNamedItem(itemRef, group, budget);
+      if (!resolved?.item) {
         missingItems += 1;
+        if (collectMatchDetails) {
+          matchDetails.push({
+            group: group.key || "items",
+            status: "missing",
+            requested: String(itemRef?.name || "").trim(),
+            lookup: String(itemRef?.lookup || "").trim(),
+            matchedName: "",
+            matchedType: "",
+            matchedPack: "",
+            strategy: ""
+          });
+        }
         continue;
       }
 
+      const item = resolved.item;
       const dedupeName = String(item.name || "").trim().toLowerCase();
-      if (!dedupeName || addedNames.has(dedupeName)) continue;
+      if (!dedupeName || addedNames.has(dedupeName)) {
+        if (collectMatchDetails) {
+          matchDetails.push({
+            group: group.key || "items",
+            status: "duplicate",
+            requested: String(itemRef?.name || "").trim(),
+            lookup: String(itemRef?.lookup || "").trim(),
+            matchedName: String(resolved?.meta?.matchedName || item?.name || "").trim(),
+            matchedType: String(resolved?.meta?.matchedType || item?.type || "").trim(),
+            matchedPack: String(resolved?.meta?.matchedPack || "").trim(),
+            strategy: String(resolved?.meta?.strategy || "").trim()
+          });
+        }
+        continue;
+      }
       addedNames.add(dedupeName);
       items.push(item);
       resolvedItems += 1;
+      if (collectMatchDetails) {
+        matchDetails.push({
+          group: group.key || "items",
+          status: "resolved",
+          requested: String(itemRef?.name || "").trim(),
+          lookup: String(itemRef?.lookup || "").trim(),
+          matchedName: String(resolved?.meta?.matchedName || item?.name || "").trim(),
+          matchedType: String(resolved?.meta?.matchedType || item?.type || "").trim(),
+          matchedPack: String(resolved?.meta?.matchedPack || "").trim(),
+          strategy: String(resolved?.meta?.strategy || "").trim()
+        });
+      }
     }
   }
 
-  return { items, resolvedItems, missingItems };
+  return { items, resolvedItems, missingItems, matchDetails };
 }
 
 async function resolveAiNamedItem(itemRef, group, budget) {
@@ -663,20 +713,20 @@ async function resolveAiNamedItem(itemRef, group, budget) {
 
   const cachedLocalized = pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget);
   if (cachedLocalized) {
-    return prepareResolvedAiItem(cachedLocalized, group);
+    return prepareResolvedAiItem(cachedLocalized, group, { strategy: "cached-localized" });
   }
 
   for (const candidate of nameCandidates) {
     const exact = await getItemByNameFromPacks(packs, candidate);
     if (exact && allowedTypes.includes(String(exact.type || "").toLowerCase())) {
-      return prepareResolvedAiItem(exact, group);
+      return prepareResolvedAiItem(exact, group, { strategy: "exact-pack-name" });
     }
   }
 
   for (const candidate of nameCandidates) {
     const cachedExact = getCachedDocByName(packs, candidate);
     if (cachedExact && allowedTypes.includes(String(cachedExact.type || "").toLowerCase())) {
-      return prepareResolvedAiItem(cachedExact, group);
+      return prepareResolvedAiItem(cachedExact, group, { strategy: "cached-exact-name" });
     }
   }
 
@@ -696,7 +746,7 @@ async function resolveAiNamedItem(itemRef, group, budget) {
     budget
   );
   if (cachedByKeywords) {
-    return prepareResolvedAiItem(cachedByKeywords, group);
+    return prepareResolvedAiItem(cachedByKeywords, group, { strategy: "cached-keywords" });
   }
 
   const fuzzy = await getRandomItemByKeywordsFromAllPacksWithBudget(
@@ -717,10 +767,10 @@ async function resolveAiNamedItem(itemRef, group, budget) {
     !ammoLike
   );
   if (!fuzzy) return null;
-  return prepareResolvedAiItem(fuzzy, group);
+  return prepareResolvedAiItem(fuzzy, group, { strategy: "fuzzy-keywords" });
 }
 
-function prepareResolvedAiItem(itemDoc, group) {
+function prepareResolvedAiItem(itemDoc, group, meta = {}) {
   const item = cloneItemData(toItemData(itemDoc));
   if (!item) return null;
 
@@ -729,16 +779,43 @@ function prepareResolvedAiItem(itemDoc, group) {
     item.system.proficient = true;
   }
   if (group?.ensureFeatureActivities && item.type === "feat") {
-    return ensureActivities(item);
+    return {
+      item: ensureActivities(item),
+      meta: {
+        matchedName: String(itemDoc?.name || item?.name || "").trim(),
+        matchedType: String(itemDoc?.type || item?.type || "").trim(),
+        matchedPack: getResolvedItemSourcePack(itemDoc),
+        strategy: String(meta?.strategy || "").trim()
+      }
+    };
   }
-  return item;
+  return {
+    item,
+    meta: {
+      matchedName: String(itemDoc?.name || item?.name || "").trim(),
+      matchedType: String(itemDoc?.type || item?.type || "").trim(),
+      matchedPack: getResolvedItemSourcePack(itemDoc),
+      strategy: String(meta?.strategy || "").trim()
+    }
+  };
+}
+
+function getResolvedItemSourcePack(itemDoc) {
+  const direct = String(itemDoc?.pack || itemDoc?.collection || "").trim();
+  if (direct) return direct;
+  const uuid = String(itemDoc?.uuid || itemDoc?.flags?.core?.sourceId || itemDoc?.flags?.dnd5e?.sourceId || "").trim();
+  if (!uuid) return "";
+  const parts = uuid.split(".");
+  if (parts.length >= 5 && parts[0] === "Compendium") {
+    return parts.slice(1, -2).join(".");
+  }
+  return "";
 }
 
 function normalizeAiItemGroups(rawItems) {
   const source = rawItems && typeof rawItems === "object" ? rawItems : {};
   const flatItems = normalizeAiItemReferenceArray(source.items, 18, 80);
   const groupedFlat = splitFlatItemNamesForActor(flatItems);
-  const featuresFromActions = normalizeStringArrayForActor(source.actions, 12, 100);
   return {
     weapons: dedupeItemRefList([
       ...normalizeAiItemReferenceArray(source.weapons, 6, 80),
@@ -761,10 +838,7 @@ function normalizeAiItemGroups(rawItems) {
       ...groupedFlat.loot
     ], 10),
     spells: dedupeStringList(normalizeStringArrayForActor(source.spells, 14, 80), 14),
-    features: dedupeStringList([
-      ...normalizeStringArrayForActor(source.features, 12, 100),
-      ...featuresFromActions
-    ], 14)
+    features: dedupeStringList(normalizeStringArrayForActor(source.features, 12, 100), 14)
   };
 }
 
@@ -1042,15 +1116,20 @@ function pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget) 
     let lookupExact = 0;
     let localizedPartial = 0;
     let lookupPartial = 0;
+    let localizedFuzzy = 0;
+    let lookupFuzzy = 0;
     for (const term of localizedSeeds) {
       if (haystack.includes(term) || haystackWordSet.has(term)) localizedExact += 1;
       if (haystack.some((token) => token.includes(term))) localizedPartial += 1;
+      localizedFuzzy += getBestFuzzySimilarity(term, haystack);
     }
     for (const term of lookupSeeds) {
       if (haystack.includes(term) || haystackWordSet.has(term)) lookupExact += 1;
       if (haystack.some((token) => token.includes(term))) lookupPartial += 1;
+      lookupFuzzy += getBestFuzzySimilarity(term, haystack);
     }
-    if (!localizedPartial && !lookupPartial) continue;
+    const hasFuzzy = localizedFuzzy >= 0.72 || lookupFuzzy >= 0.72;
+    if (!localizedPartial && !lookupPartial && !hasFuzzy) continue;
 
     const withinBudget = isWithinBudget(doc, budget, true);
     const nameScript = detectTextScript(doc?.name);
@@ -1060,6 +1139,8 @@ function pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget) 
       lookupExact * 70 +
       localizedPartial * 15 +
       lookupPartial * 12 +
+      localizedFuzzy * 18 +
+      lookupFuzzy * 14 +
       scriptBonus +
       (withinBudget ? 1 : 0);
 
@@ -1075,6 +1156,70 @@ function pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget) 
   }
 
   return best?.doc || null;
+}
+
+function getBestFuzzySimilarity(term, haystackTokens) {
+  const source = normalizeFuzzyName(term);
+  if (!source || source.length < 4) return 0;
+  const expanded = new Set();
+  for (const token of haystackTokens || []) {
+    const normalized = normalizeFuzzyName(token);
+    if (!normalized) continue;
+    expanded.add(normalized);
+    for (const part of normalized.split(/\s+/).filter((entry) => entry.length >= 3)) {
+      expanded.add(part);
+    }
+  }
+  if (!expanded.size) return 0;
+  let best = 0;
+  for (const candidate of expanded) {
+    const score = diceSimilarity(source, candidate);
+    if (score > best) best = score;
+  }
+  return best;
+}
+
+function normalizeFuzzyName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[`'’"]/g, "")
+    .replace(/[^a-zа-я0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function diceSimilarity(a, b) {
+  const left = normalizeFuzzyName(a);
+  const right = normalizeFuzzyName(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.length < 2 || right.length < 2) return 0;
+  const leftBigrams = buildBigrams(left);
+  const rightBigrams = buildBigrams(right);
+  if (!leftBigrams.length || !rightBigrams.length) return 0;
+  const rightMap = new Map();
+  for (const gram of rightBigrams) {
+    rightMap.set(gram, (rightMap.get(gram) || 0) + 1);
+  }
+  let overlap = 0;
+  for (const gram of leftBigrams) {
+    const count = rightMap.get(gram) || 0;
+    if (count <= 0) continue;
+    overlap += 1;
+    rightMap.set(gram, count - 1);
+  }
+  return (2 * overlap) / (leftBigrams.length + rightBigrams.length);
+}
+
+function buildBigrams(text) {
+  const value = String(text || "");
+  if (value.length < 2) return [];
+  const grams = [];
+  for (let i = 0; i < value.length - 1; i++) {
+    grams.push(value.slice(i, i + 2));
+  }
+  return grams;
 }
 
 function buildSearchWordSet(tokens) {

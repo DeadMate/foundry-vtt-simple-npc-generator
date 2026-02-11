@@ -2376,12 +2376,14 @@ function openImportAiNpcDialog({ form, encounterModeInput, speciesEntries }) {
         label: i18nText("ui.dialog.buttonImportNpc"),
         callback: async (html) => {
           const rawJson = String(html.find("textarea[name='aiNpcJson']").val() || "").trim();
+          const app = html.closest(".app.window-app.dialog");
+          const showImportPreview = app.find("input[name='showImportPreview']").prop("checked") === true;
           if (!rawJson) {
             ui.notifications?.warn(i18nText("ui.warnPasteJsonFirst"));
             return;
           }
           try {
-            await importNpcFromChatGptJson(rawJson, { form, encounterModeInput, speciesEntries });
+            await importNpcFromChatGptJson(rawJson, { form, encounterModeInput, speciesEntries, showImportPreview });
           } catch (err) {
             console.error("NPC Button: Failed to import ChatGPT NPC JSON.", err);
             const reason = String(err?.message || "").trim();
@@ -2395,11 +2397,31 @@ function openImportAiNpcDialog({ form, encounterModeInput, speciesEntries }) {
       },
       cancel: { label: i18nText("common.cancel") }
     },
-    default: "import"
+    default: "import",
+    render: (html) => {
+      const app = html.closest(".app.window-app.dialog");
+      const dialogButtons = app.find(".dialog-buttons");
+      if (!dialogButtons.length || dialogButtons.find(".npc-btn-import-preview-toggle").length) return;
+
+      const checkboxId = `${MODULE_ID}-show-import-preview-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const toggle = $(`
+        <label class="npc-btn-import-preview-toggle" for="${checkboxId}" style="display:inline-flex;align-items:center;gap:0.35rem;margin-right:0.5rem;font-size:0.82rem;opacity:0.9;white-space:nowrap;">
+          <input id="${checkboxId}" type="checkbox" name="showImportPreview" style="margin:0;" />
+          <span>${i18nHtml("ui.dialog.importShowPreview", "Show preview")}</span>
+        </label>
+      `);
+
+      const importButton = dialogButtons.find("button[data-button='import']").first();
+      if (importButton.length) {
+        toggle.insertBefore(importButton);
+      } else {
+        dialogButtons.prepend(toggle);
+      }
+    }
   }).render(true);
 }
 
-async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, speciesEntries }) {
+async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, speciesEntries, showImportPreview = false }) {
   await loadData();
   const parsed = parseLooseJsonObject(rawJson);
   const blueprints = normalizeImportedBlueprints(parsed);
@@ -2461,20 +2483,27 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
       parsedBlueprint.race = selectedSpecies.name;
     }
 
-    const result = await buildActorDataFromAiBlueprint(parsedBlueprint, folderId);
+    const result = await buildActorDataFromAiBlueprint(parsedBlueprint, folderId, { collectMatchDetails: true });
     if (!result?.actorData) {
       throw new Error(i18nText("ui.importErrorBuildActorData"));
     }
     buildResults.push({
+      sourceName: String(parsedBlueprint?.name || result?.actorData?.name || "").trim(),
       actorData: result.actorData,
       speciesEntry: findSpeciesEntryByRace(speciesList, parsedBlueprint.race) || selectedSpecies || null,
       resolvedItems: Number(result.resolvedItems || 0),
-      missingItems: Number(result.missingItems || 0)
+      missingItems: Number(result.missingItems || 0),
+      matchDetails: Array.isArray(result.matchDetails) ? result.matchDetails : []
     });
   }
 
   if (!buildResults.length) {
     throw new Error(i18nText("ui.importErrorNoEntriesParsed"));
+  }
+
+  if (showImportPreview) {
+    const confirmed = await openNpcImportPreviewDialog(buildResults);
+    if (!confirmed) return;
   }
 
   const created = typeof Actor.createDocuments === "function"
@@ -2529,6 +2558,188 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
     return;
   }
   ui.notifications?.info(i18nFormat("ui.infoImportedMany", { count }));
+}
+
+async function openNpcImportPreviewDialog(buildResults) {
+  const rows = buildNpcImportPreviewRows(buildResults);
+  const viewportWidth = Number(globalThis?.innerWidth || 1400);
+  const viewportHeight = Number(globalThis?.innerHeight || 900);
+  const dialogWidth = Math.max(420, Math.min(1500, viewportWidth - 48));
+  const dialogHeight = Math.max(320, Math.min(920, viewportHeight - 56));
+  const resolved = rows.filter((entry) => entry.status === "resolved").length;
+  const missing = rows.filter((entry) => entry.status === "missing").length;
+  const duplicate = rows.filter((entry) => entry.status === "duplicate").length;
+  const summaryText = rows.length
+    ? i18nFormat(
+      "ui.importPreview.summary",
+      { npcs: buildResults.length, rows: rows.length, resolved, missing, duplicate },
+      `NPCs: ${buildResults.length} | Rows: ${rows.length} | Resolved: ${resolved} | Missing: ${missing} | Duplicate: ${duplicate}`
+    )
+    : i18nFormat(
+      "ui.importPreview.summaryNoRows",
+      { npcs: buildResults.length },
+      `NPCs: ${buildResults.length} | No compendium lookup entries detected in payload.`
+    );
+
+  const rowStyleByStatus = {
+    resolved: "background:rgba(60,160,90,0.16);",
+    missing: "background:rgba(195,55,55,0.16);",
+    duplicate: "background:rgba(220,140,35,0.16);"
+  };
+  const statusBadgeStyleByStatus = {
+    resolved: "background:#2e7d32;color:#ffffff;",
+    missing: "background:#b71c1c;color:#ffffff;",
+    duplicate: "background:#ef6c00;color:#1f1300;"
+  };
+
+  const tableRows = rows.length
+    ? rows.map((entry) => {
+      const matchedCell = entry.matchedName
+        ? [
+          `<strong>${escapeHtml(entry.matchedName)}</strong>`,
+          entry.matchedType ? `<div style="opacity:0.8;font-size:0.82em;">${escapeHtml(entry.matchedType)}</div>` : "",
+          entry.matchedPack ? `<div style="opacity:0.75;font-size:0.78em;">${escapeHtml(entry.matchedPack)}</div>` : "",
+          entry.strategy ? `<div style="opacity:0.65;font-size:0.74em;">${escapeHtml(entry.strategy)}</div>` : ""
+        ].filter(Boolean).join("")
+        : `<span style="opacity:0.65;">${i18nHtml("ui.importPreview.none", "none")}</span>`;
+      return `
+        <tr style="${rowStyleByStatus[entry.status] || ""}">
+          <td>${escapeHtml(entry.npcName)}</td>
+          <td>${escapeHtml(getNpcImportGroupLabel(entry.group))}</td>
+          <td>${escapeHtml(entry.requested || "-")}</td>
+          <td>${escapeHtml(entry.lookup || "-")}</td>
+          <td>${matchedCell}</td>
+          <td>
+            <span style="display:inline-block;padding:0.15rem 0.45rem;border-radius:999px;font-size:0.78em;font-weight:700;${statusBadgeStyleByStatus[entry.status] || ""}">
+              ${escapeHtml(getNpcImportStatusLabel(entry.status))}
+            </span>
+          </td>
+        </tr>
+      `;
+    }).join("")
+    : `<tr><td colspan="6" style="text-align:center;opacity:0.75;">${i18nHtml("ui.importPreview.noRows", "No lookup rows to preview.")}</td></tr>`;
+
+  const content = `
+    <style>
+      .npc-btn-import-preview { display:flex; flex-direction:column; gap:0.5rem; height:100%; min-height:0; overflow:hidden; }
+      .npc-btn-import-preview__note { margin:0; opacity:0.88; font-size:0.84rem; }
+      .npc-btn-import-preview__summary { margin:0; font-size:0.83rem; font-weight:600; }
+      .npc-btn-import-preview__table-wrap { flex:1 1 auto; min-height:0; overflow:auto; overscroll-behavior:contain; border:1px solid rgba(255,255,255,0.12); border-radius:8px; }
+      .npc-btn-import-preview table { width:100%; min-width:52rem; border-collapse:collapse; font-size:clamp(0.74rem, 0.68rem + 0.2vw, 0.82rem); table-layout:fixed; }
+      .npc-btn-import-preview th, .npc-btn-import-preview td { padding:0.35rem 0.45rem; border-bottom:1px solid rgba(255,255,255,0.1); vertical-align:top; text-align:left; overflow-wrap:anywhere; word-break:break-word; }
+      .npc-btn-import-preview thead th { position:sticky; top:0; background:#1d2233; z-index:1; }
+    </style>
+    <div class="npc-btn-import-preview">
+      <p class="npc-btn-import-preview__note">${i18nHtml("ui.importPreview.description", "Debug preview before import: incoming entries and compendium match results.")}</p>
+      <p class="npc-btn-import-preview__summary">${escapeHtml(summaryText)}</p>
+      <div class="npc-btn-import-preview__table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>${i18nHtml("ui.importPreview.colNpc", "NPC")}</th>
+              <th>${i18nHtml("ui.importPreview.colGroup", "Group")}</th>
+              <th>${i18nHtml("ui.importPreview.colRequested", "Requested")}</th>
+              <th>${i18nHtml("ui.importPreview.colLookup", "Lookup")}</th>
+              <th>${i18nHtml("ui.importPreview.colMatched", "Matched")}</th>
+              <th>${i18nHtml("ui.importPreview.colStatus", "Status")}</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(!!value);
+    };
+
+    new Dialog({
+      title: i18nText("ui.importPreview.title", "NPC Import Preview"),
+      content,
+      width: dialogWidth,
+      height: dialogHeight,
+      resizable: true,
+      render: (html) => {
+        const app = html.closest(".app.window-app.dialog");
+        const form = app.find("form");
+        const windowContent = app.find(".window-content");
+        const dialogContent = app.find(".dialog-content");
+        app.css({
+          minWidth: "420px",
+          minHeight: "320px",
+          maxWidth: "min(96vw, 1500px)",
+          maxHeight: "min(94vh, 920px)"
+        });
+        form.css({ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" });
+        windowContent.css({ display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" });
+        dialogContent.css({ display: "flex", flexDirection: "column", flex: "1 1 auto", minHeight: 0, overflow: "hidden" });
+      },
+      buttons: {
+        confirm: {
+          label: i18nText("ui.dialog.buttonImportNpc"),
+          callback: () => finish(true)
+        },
+        cancel: {
+          label: i18nText("common.cancel"),
+          callback: () => finish(false)
+        }
+      },
+      default: "confirm",
+      close: () => finish(false)
+    }).render(true);
+  });
+}
+
+function buildNpcImportPreviewRows(buildResults) {
+  const rows = [];
+  for (let index = 0; index < (buildResults || []).length; index++) {
+    const entry = buildResults[index] || {};
+    const fallbackName = `${i18nText("common.unnamed", "Unnamed")} #${index + 1}`;
+    const npcName = String(entry?.actorData?.name || entry?.sourceName || fallbackName).trim() || fallbackName;
+    const details = Array.isArray(entry?.matchDetails) ? entry.matchDetails : [];
+    for (const detail of details) {
+      rows.push({
+        npcName,
+        group: String(detail?.group || "items").trim().toLowerCase(),
+        status: String(detail?.status || "missing").trim().toLowerCase(),
+        requested: String(detail?.requested || "").trim(),
+        lookup: String(detail?.lookup || "").trim(),
+        matchedName: String(detail?.matchedName || "").trim(),
+        matchedType: String(detail?.matchedType || "").trim(),
+        matchedPack: String(detail?.matchedPack || "").trim(),
+        strategy: String(detail?.strategy || "").trim()
+      });
+    }
+  }
+  return rows;
+}
+
+function getNpcImportGroupLabel(groupKey) {
+  const map = {
+    weapons: "ui.importPreview.groupWeapons",
+    armor: "ui.importPreview.groupArmor",
+    equipment: "ui.importPreview.groupEquipment",
+    consumables: "ui.importPreview.groupConsumables",
+    loot: "ui.importPreview.groupLoot",
+    spells: "ui.importPreview.groupSpells",
+    features: "ui.importPreview.groupFeatures"
+  };
+  const normalized = String(groupKey || "").trim().toLowerCase();
+  const key = map[normalized];
+  if (!key) return capitalize(normalized || "items");
+  return i18nText(key, capitalize(normalized || "items"));
+}
+
+function getNpcImportStatusLabel(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "resolved") return i18nText("ui.importPreview.statusResolved", "resolved");
+  if (normalized === "duplicate") return i18nText("ui.importPreview.statusDuplicate", "duplicate");
+  return i18nText("ui.importPreview.statusMissing", "missing");
 }
 
 function normalizeImportedBlueprints(parsed) {

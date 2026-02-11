@@ -1,7 +1,11 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Add optional NPC import preview toggle in the JSON import dialog (unchecked = immediate import, checked = confirmation preview).
+- Improve import preview dialog behavior on smaller monitors: better sizing limits, proper internal scroll, and more readable adaptive table text.
+- Add detailed compendium match diagnostics during AI JSON import (resolved/missing/duplicate rows with matched pack/type and match strategy).
+- Improve AI item matching quality with fuzzy similarity scoring and broader allowed-type fallback for item groups.
+- Refine AI prompt/schema rules so weapon attacks are not mixed into features and unknown special actions/features default to empty arrays.
 
 ## 0.9.1
 - Shop import workflow polish and AI panel cleanup.
