@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.9.2
 - Add optional NPC import preview toggle in the JSON import dialog (unchecked = immediate import, checked = confirmation preview).
 - Improve import preview dialog behavior on smaller monitors: better sizing limits, proper internal scroll, and more readable adaptive table text.
 - Add detailed compendium match diagnostics during AI JSON import (resolved/missing/duplicate rows with matched pack/type and match strategy).
