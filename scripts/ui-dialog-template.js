@@ -67,7 +67,7 @@ export function buildNpcDialogContent({
       }
       .npc-btn-tabs {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 0.4rem;
       }
       .npc-btn-tabs button {
@@ -218,6 +218,7 @@ export function buildNpcDialogContent({
     <form class="npc-btn-form">
       <input type="hidden" name="encounterMode" value="main">
       <input type="hidden" name="shopImportPayload" value="">
+      <input type="hidden" name="lootImportPayload" value="">
       <div class="npc-btn-shell">
         <div class="npc-btn-hero">
           <div>
@@ -231,6 +232,7 @@ export function buildNpcDialogContent({
           <button type="button" data-tab="main" class="active">${i18nHtml("ui.dialog.tabMainNpc")}</button>
           <button type="button" data-tab="encounter">${i18nHtml("ui.dialog.tabEncounter")}</button>
           <button type="button" data-tab="shop">${i18nHtml("ui.dialog.tabShop")}</button>
+          <button type="button" data-tab="loot">${i18nHtml("ui.dialog.tabLoot")}</button>
         </div>
 
         <div data-tab-panel="main" class="npc-btn-panel">
@@ -450,6 +452,63 @@ export function buildNpcDialogContent({
           </div>
         </div>
 
+        <div data-tab-panel="loot" class="npc-btn-panel" style="display: none;">
+          <div class="npc-btn-grid">
+            <section class="npc-btn-card">
+              <h3>${i18nHtml("ui.dialog.cardLootType")}</h3>
+              <label class="npc-btn-field">
+                <span>${i18nHtml("ui.dialog.fieldLootType")}</span>
+                <select name="lootType">
+                  <option value="mixed">${i18nHtml("ui.dialog.lootTypeMixed")}</option>
+                  <option value="coins">${i18nHtml("ui.dialog.lootTypeCoins")}</option>
+                  <option value="gear">${i18nHtml("ui.dialog.lootTypeGear")}</option>
+                  <option value="consumables">${i18nHtml("ui.dialog.lootTypeConsumables")}</option>
+                  <option value="weapons">${i18nHtml("ui.dialog.lootTypeWeapons")}</option>
+                  <option value="armor">${i18nHtml("ui.dialog.lootTypeArmor")}</option>
+                  <option value="scrolls">${i18nHtml("ui.dialog.lootTypeScrolls")}</option>
+                </select>
+              </label>
+              <p class="npc-btn-note">${i18nHtml("ui.dialog.noteLootSummary")}</p>
+            </section>
+
+            <section class="npc-btn-card">
+              <h3>${i18nHtml("ui.dialog.cardLootRoll")}</h3>
+              <label class="npc-btn-field">
+                <span>${i18nHtml("ui.dialog.fieldLootItemCount")}</span>
+                <input type="number" name="lootCount" value="12" min="1" max="60">
+              </label>
+              <label class="npc-btn-field">
+                <span>${i18nHtml("ui.dialog.fieldLootBudget")}</span>
+                <select name="lootBudget">
+                  <option value="poor">${i18nHtml("ui.dialog.budgetPoor")}</option>
+                  <option value="normal" selected>${i18nHtml("ui.dialog.budgetNormal")}</option>
+                  <option value="well">${i18nHtml("ui.dialog.budgetWellOff")}</option>
+                  <option value="elite">${i18nHtml("ui.dialog.budgetElite")}</option>
+                </select>
+              </label>
+              <label class="npc-btn-field">
+                <span>${i18nHtml("ui.dialog.fieldLootTier")}</span>
+                <select name="lootTier">
+                  <option value="auto">${i18nHtml("ui.dialog.tierAutoPartyLevel")}</option>
+                  <option value="1">T1</option>
+                  <option value="2">T2</option>
+                  <option value="3">T3</option>
+                  <option value="4">T4</option>
+                </select>
+              </label>
+            </section>
+
+            <section class="npc-btn-card">
+              <h3>${i18nHtml("ui.dialog.cardLootOptions")}</h3>
+              <div class="npc-btn-checks npc-btn-checks--single">
+                <label class="checkbox"><input type="checkbox" name="lootAllowMagic"> ${i18nHtml("ui.dialog.lootOptionAllowMagic")}</label>
+                <label class="checkbox"><input type="checkbox" name="lootIncludeCoins" checked> ${i18nHtml("ui.dialog.lootOptionIncludeCoins")}</label>
+                <label class="checkbox"><input type="checkbox" name="lootUniqOnly" checked> ${i18nHtml("ui.dialog.lootOptionUniqueOnly")}</label>
+              </div>
+            </section>
+          </div>
+        </div>
+
         <section class="npc-btn-card npc-btn-ai-group" data-ai-section>
           <div class="npc-btn-ai-top">
             <h3>${i18nHtml("ui.dialog.cardAiTools")}</h3>
@@ -464,6 +523,10 @@ export function buildNpcDialogContent({
             <div class="npc-btn-ai-actions" data-ai-shop-actions style="display:none;">
               <button type="button" data-action="shop-copy-prompt">${i18nHtml("ui.dialog.shopCopyPrompt")}</button>
               <button type="button" data-action="shop-import-json">${i18nHtml("ui.dialog.shopImportJson")}</button>
+            </div>
+            <div class="npc-btn-ai-actions" data-ai-loot-actions style="display:none;">
+              <button type="button" data-action="loot-copy-prompt">${i18nHtml("ui.dialog.lootCopyPrompt")}</button>
+              <button type="button" data-action="loot-import-json">${i18nHtml("ui.dialog.lootImportJson")}</button>
             </div>
             <div class="npc-btn-ai-options" data-ai-npc-options>
               <label class="checkbox">

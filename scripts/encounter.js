@@ -15,6 +15,16 @@ const SHOP_TYPE_FOLDER_LABEL_KEYS = {
   food: "ui.shop.folderTypeFood"
 };
 
+const LOOT_TYPE_FOLDER_LABEL_KEYS = {
+  mixed: "ui.loot.folderTypeMixed",
+  coins: "ui.loot.folderTypeCoins",
+  gear: "ui.loot.folderTypeGear",
+  consumables: "ui.loot.folderTypeConsumables",
+  weapons: "ui.loot.folderTypeWeapons",
+  armor: "ui.loot.folderTypeArmor",
+  scrolls: "ui.loot.folderTypeScrolls"
+};
+
 function localizeModuleKey(key, fallback = "") {
   const fullKey = `${MODULE_ID}.${String(key || "").trim()}`;
   const localized = game.i18n?.localize?.(fullKey);
@@ -186,6 +196,41 @@ export async function ensureShopFolder(shopType = "shop") {
 
   const safePrefix = sanitizeFolderSegment(localizedPrefix, "Shop");
   const safeType = sanitizeFolderSegment(localizedType, "shop");
+
+  let next = 1;
+  const re = new RegExp(`^${escapeRegExp(safePrefix)}-${escapeRegExp(safeType)}-(\\d+)$`, "i");
+  for (const folder of folders) {
+    const match = String(folder.name || "").match(re);
+    if (!match) continue;
+    const id = Number(match[1]);
+    if (Number.isFinite(id) && id >= next) next = id + 1;
+  }
+  const name = `${safePrefix}-${safeType}-${next}`;
+  try {
+    const created = await Folder.create({ name, type: "Actor" });
+    return created?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ensure a loot folder exists, creating one if needed
+ * @param {string} [lootType] - Loot type key for folder naming
+ * @returns {Promise<string|null>} Folder ID or null
+ */
+export async function ensureLootFolder(lootType = "loot") {
+  if (!game.user?.isGM || typeof Folder?.create !== "function") return null;
+  const folders = (game.folders || []).filter((folder) => folder.type === "Actor");
+  const normalizedType = String(lootType || "loot").trim().toLowerCase();
+  const typeLabelKey = LOOT_TYPE_FOLDER_LABEL_KEYS[normalizedType];
+  const localizedType = typeLabelKey
+    ? localizeModuleKey(typeLabelKey, normalizedType)
+    : normalizedType;
+  const localizedPrefix = localizeModuleKey("ui.loot.folderPrefix", "Loot");
+
+  const safePrefix = sanitizeFolderSegment(localizedPrefix, "Loot");
+  const safeType = sanitizeFolderSegment(localizedType, "loot");
 
   let next = 1;
   const re = new RegExp(`^${escapeRegExp(safePrefix)}-${escapeRegExp(safeType)}-(\\d+)$`, "i");

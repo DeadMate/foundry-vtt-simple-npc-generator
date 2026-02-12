@@ -1,7 +1,10 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Add new **Loot** generator tab with type/budget/tier filters, coin toggle, unique-only option, and ChatGPT prompt/import workflow.
+- Add dedicated actor/token icons for generated **Shop** and **Loot** containers.
+- Fix Actors sidebar button rendering stability (single button, no overlay duplicates).
+- Loot generation now always uses auto-created localized loot folders (manual folder picker removed).
 
 ## 0.9.2
 - Add optional NPC import preview toggle in the JSON import dialog (unchecked = immediate import, checked = confirmation preview).

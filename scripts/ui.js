@@ -21,7 +21,8 @@ import {
   buildEncounterCount,
   buildEncounterPlan,
   ensureEncounterFolder,
-  ensureShopFolder
+  ensureShopFolder,
+  ensureLootFolder
 } from "./encounter.js";
 import { generateNpc, buildActorData, buildActorDataFromAiBlueprint, getClassForArchetype } from "./npc-generator.js";
 import {
@@ -60,6 +61,7 @@ function i18nHtmlFormat(key, data = {}, fallback = "") {
 
 const BUDGET_OPTIONS = new Set(["poor", "normal", "well", "elite"]);
 const SHOP_TYPES = new Set(["market", "general", "alchemy", "scrolls", "weapons", "armor", "food"]);
+const LOOT_TYPES = new Set(["mixed", "coins", "gear", "consumables", "weapons", "armor", "scrolls"]);
 const SHOP_TYPE_WEIGHTS = [
   { type: "general", weight: 4 },
   { type: "food", weight: 3 },
@@ -68,6 +70,15 @@ const SHOP_TYPE_WEIGHTS = [
   { type: "armor", weight: 2 },
   { type: "scrolls", weight: 1 }
 ];
+const LOOT_TYPE_WEIGHTS = [
+  { type: "gear", weight: 4 },
+  { type: "consumables", weight: 3 },
+  { type: "weapons", weight: 2 },
+  { type: "armor", weight: 2 },
+  { type: "scrolls", weight: 1 }
+];
+const SHOPKEEPER_ICON_PATH = `modules/${MODULE_ID}/assets/icons/shopkeeper.svg`;
+const LOOT_CONTAINER_ICON_PATH = `modules/${MODULE_ID}/assets/icons/loot-bag.svg`;
 
 /**
  * Get actor folder options as HTML
@@ -284,13 +295,24 @@ export async function loadChangelogNotes(version) {
  * @param {jQuery|HTMLElement} html - Directory HTML
  */
 export function addNpcButton(html) {
-  const $html = html instanceof HTMLElement ? $(html) : html;
+  const $html = html?.jquery ? html : $(html);
+  if (!$html?.length || typeof $html.find !== "function") return;
+  $html
+    .find(`.npc-btn-header-actions [data-${MODULE_ID}='create']`)
+    .filter((_, el) => $(el).closest(".directory-header").length === 0)
+    .remove();
+  $html
+    .find(`.npc-btn-header-actions[data-${MODULE_ID}='actions']`)
+    .filter((_, el) => $(el).closest(".directory-header").length === 0)
+    .remove();
   const selectors = [
     ".directory-header .header-actions",
     ".directory-header .action-buttons",
     ".directory-header .controls",
     ".directory-header .action-buttons.flexrow",
-    ".directory-header .action-buttons .actions"
+    ".directory-header .action-buttons .actions",
+    ".directory-header",
+    ".header-actions"
   ];
 
   let headerActions = null;
@@ -302,14 +324,15 @@ export function addNpcButton(html) {
     }
   }
 
-  const existing = $html.find(`[data-${MODULE_ID}='create']`);
+  const existing = $html.find(`.directory-header [data-${MODULE_ID}='create'], [data-${MODULE_ID}='create'].npc-btn-sidebar-button`);
   if (existing.length) return;
 
   const button = $(
-    `<button type="button" class="create-entity" data-${MODULE_ID}="create">
+    `<button type="button" class="npc-btn-sidebar-button" data-${MODULE_ID}="create">
       <i class="fas fa-user-plus"></i> ${i18nHtml("ui.sidebarButton.label")}
     </button>`
   );
+  button.attr("style", "display:inline-flex !important;align-items:center;gap:0.35rem;");
 
   button.on("click", () => openNpcDialog());
 
@@ -324,6 +347,19 @@ export function addNpcButton(html) {
 
   if (createButton.length) {
     createButton.after(button);
+    return;
+  }
+
+  const directoryHeader = $html.find(".directory-header").first();
+  if (directoryHeader.length) {
+    let fallbackActions = directoryHeader.find(`.npc-btn-header-actions[data-${MODULE_ID}='actions']`).first();
+    if (!fallbackActions.length) {
+      fallbackActions = $(
+        `<div class="npc-btn-header-actions action-buttons flexrow" data-${MODULE_ID}="actions"></div>`
+      );
+      directoryHeader.append(fallbackActions);
+    }
+    fallbackActions.append(button);
     return;
   }
 }
@@ -419,6 +455,11 @@ export async function openNpcDialog() {
           createAiButton.text(i18nText("ui.dialog.buttonCreateAiNpc"));
           return;
         }
+        if (mode === "loot") {
+          createButton.text(i18nText("ui.dialog.buttonCreateLoot"));
+          createAiButton.text(i18nText("ui.dialog.buttonCreateAiNpc"));
+          return;
+        }
         createButton.text(i18nText("ui.dialog.buttonCreateNpc"));
         createAiButton.text(i18nText("ui.dialog.buttonCreateAiNpc"));
       };
@@ -456,6 +497,19 @@ export async function openNpcDialog() {
         if (typeof lastOptions.shopAllowMagic === "boolean") {
           form.find("input[name='shopAllowMagic']").prop("checked", lastOptions.shopAllowMagic);
         }
+        if (lastOptions.lootType) form.find("select[name='lootType']").val(String(lastOptions.lootType));
+        if (lastOptions.lootCount) form.find("input[name='lootCount']").val(Number(lastOptions.lootCount));
+        if (lastOptions.lootBudget) form.find("select[name='lootBudget']").val(String(lastOptions.lootBudget));
+        if (lastOptions.lootTier) form.find("select[name='lootTier']").val(String(lastOptions.lootTier));
+        if (typeof lastOptions.lootAllowMagic === "boolean") {
+          form.find("input[name='lootAllowMagic']").prop("checked", lastOptions.lootAllowMagic);
+        }
+        if (typeof lastOptions.lootIncludeCoins === "boolean") {
+          form.find("input[name='lootIncludeCoins']").prop("checked", lastOptions.lootIncludeCoins);
+        }
+        if (typeof lastOptions.lootUniqOnly === "boolean") {
+          form.find("input[name='lootUniqOnly']").prop("checked", lastOptions.lootUniqOnly);
+        }
         if (typeof lastOptions.includeLoot === "boolean") {
           form.find("input[name='includeLoot']").prop("checked", lastOptions.includeLoot);
         }
@@ -485,7 +539,7 @@ export async function openNpcDialog() {
         }
         if (lastOptions.encounterMode) {
           const mode = String(lastOptions.encounterMode);
-          if (["main", "encounter", "shop"].includes(mode)) {
+          if (["main", "encounter", "shop", "loot"].includes(mode)) {
             tabButtons.removeClass("active");
             form.find(`[data-tab='${mode}']`).addClass("active");
             tabPanels.hide();
@@ -505,11 +559,13 @@ export async function openNpcDialog() {
       const aiControls = form.find("[data-ai-controls]");
       const aiNpcActions = form.find("[data-ai-npc-actions]");
       const aiShopActions = form.find("[data-ai-shop-actions]");
+      const aiLootActions = form.find("[data-ai-loot-actions]");
       const aiNpcOptions = form.find("[data-ai-npc-options]");
       const aiNpcNotes = form.find("[data-ai-npc-note]");
       const includeAiFlavorInput = form.find("input[name='includeAiFlavor']");
       const includeAiTokenInput = form.find("input[name='includeAiToken']");
       const shopImportPayloadInput = form.find("input[name='shopImportPayload']");
+      const lootImportPayloadInput = form.find("input[name='lootImportPayload']");
       const readChecked = (name) => !!form.find(`input[name='${name}']`).prop("checked");
       const collectDialogOptions = () => ({
         tier: String(form.find("select[name='tier']").val() || "auto"),
@@ -531,6 +587,13 @@ export async function openNpcDialog() {
         shopkeeperTier: Math.max(1, Math.min(4, Number(form.find("select[name='shopkeeperTier']").val()) || 1)),
         shopFolder: String(form.find("select[name='shopFolder']").val() || ""),
         shopAllowMagic: readChecked("shopAllowMagic"),
+        lootType: String(form.find("select[name='lootType']").val() || "mixed"),
+        lootCount: Math.max(1, Math.min(60, Number(form.find("input[name='lootCount']").val()) || 12)),
+        lootBudget: String(form.find("select[name='lootBudget']").val() || "normal"),
+        lootTier: String(form.find("select[name='lootTier']").val() || "auto"),
+        lootAllowMagic: readChecked("lootAllowMagic"),
+        lootIncludeCoins: readChecked("lootIncludeCoins"),
+        lootUniqOnly: readChecked("lootUniqOnly"),
         useAi: !!useAiToggle.prop("checked"),
         includeLoot: readChecked("includeLoot"),
         includeSecret: readChecked("includeSecret"),
@@ -639,18 +702,57 @@ export async function openNpcDialog() {
           }
         });
       });
+      form.find("[data-action='loot-copy-prompt']").on("click", async () => {
+        const promptText = buildManualLootPrompt(collectLootPromptContext(form));
+        const copied = await copyTextToClipboard(promptText);
+        if (copied) {
+          ui.notifications?.info(i18nText("ui.loot.infoPromptCopied"));
+          return;
+        }
+        new Dialog({
+          title: i18nText("ui.dialog.lootPromptTitle"),
+          content: `
+            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+              <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+                ${i18nHtml("ui.dialog.lootPromptNote")}
+              </p>
+              <textarea style="width:100%;min-height:18rem;" readonly>${escapeHtml(promptText)}</textarea>
+            </div>
+          `,
+          buttons: {
+            close: { label: i18nText("common.close") }
+          },
+          default: "close"
+        }).render(true);
+      });
+      form.find("[data-action='loot-import-json']").on("click", () => {
+        openImportLootJsonDialog({
+          onImport: async (payload) => {
+            applyImportedLootPayloadToForm(form, payload);
+            lootImportPayloadInput.val(JSON.stringify(payload));
+            encounterModeInput.val("loot");
+            persistDialogOptions();
+            await createLootFromForm(new FormData(form[0]));
+            lootImportPayloadInput.val("");
+            persistDialogOptions();
+          }
+        });
+      });
       const updateAiUi = () => {
         const mode = String(encounterModeInput.val() || "main");
         const useAi = !!useAiToggle.prop("checked");
         const shopMode = mode === "shop";
+        const lootMode = mode === "loot";
+        const nonNpcMode = shopMode || lootMode;
         aiSection.css("display", "flex");
         aiControls.css("display", useAi ? "flex" : "none");
-        aiNpcActions.css("display", shopMode ? "none" : "grid");
+        aiNpcActions.css("display", nonNpcMode ? "none" : "grid");
         aiShopActions.css("display", shopMode ? "grid" : "none");
-        aiNpcOptions.css("display", shopMode ? "none" : "grid");
-        aiNpcNotes.css("display", shopMode ? "none" : "block");
-        createAiButton.toggle(useAi && !shopMode);
-        if (shopMode) {
+        aiLootActions.css("display", lootMode ? "grid" : "none");
+        aiNpcOptions.css("display", nonNpcMode ? "none" : "grid");
+        aiNpcNotes.css("display", nonNpcMode ? "none" : "block");
+        createAiButton.toggle(useAi && !nonNpcMode);
+        if (nonNpcMode) {
           createAiButton.hide();
           createAiButton.prop("disabled", true);
           createAiButton.attr("title", "");
@@ -713,18 +815,25 @@ export async function openNpcDialog() {
           "select[name='shopType']",
           "select[name='shopBudget']",
           "select[name='shopkeeperTier']",
+          "select[name='lootType']",
+          "select[name='lootBudget']",
+          "select[name='lootTier']",
           "select[name='folder']",
           "select[name='shopFolder']",
           "input[name='partyLevel']",
           "input[name='partySize']",
           "input[name='count']",
           "input[name='shopCount']",
+          "input[name='lootCount']",
           "input[name='shopName']",
           "input[name='includeLoot']",
           "input[name='includeSecret']",
           "input[name='includeHook']",
           "input[name='importantNpc']",
-          "input[name='shopAllowMagic']"
+          "input[name='shopAllowMagic']",
+          "input[name='lootAllowMagic']",
+          "input[name='lootIncludeCoins']",
+          "input[name='lootUniqOnly']"
         ].join(", "),
         persistDialogOptions
       );
@@ -789,6 +898,13 @@ export async function createNpcFromForm(formData, options = {}) {
     const shopkeeperTier = clampRangeValue(formData.get("shopkeeperTier"), 1, 4, 1);
     const shopFolderInput = String(formData.get("shopFolder") || "").trim();
     const shopAllowMagic = formData.get("shopAllowMagic") === "on";
+    const lootType = normalizeLootType(formData.get("lootType"));
+    const lootCount = clampRangeValue(formData.get("lootCount"), 1, 60, 12);
+    const lootBudget = normalizeBudgetOption(formData.get("lootBudget") || formData.get("budget"));
+    const lootTier = String(formData.get("lootTier") || "auto");
+    const lootAllowMagic = formData.get("lootAllowMagic") === "on";
+    const lootIncludeCoins = formData.get("lootIncludeCoins") === "on";
+    const lootUniqOnly = formData.get("lootUniqOnly") === "on";
     setLastNpcOptions({
       tier: String(tierInput || "auto"),
       budget: String(formData.get("budget") || "normal"),
@@ -809,6 +925,13 @@ export async function createNpcFromForm(formData, options = {}) {
       shopkeeperTier,
       shopFolder: shopFolderInput,
       shopAllowMagic,
+      lootType,
+      lootCount,
+      lootBudget,
+      lootTier,
+      lootAllowMagic,
+      lootIncludeCoins,
+      lootUniqOnly,
       useAi: useAiRequested,
       includeLoot: formData.get("includeLoot") === "on",
       includeSecret: formData.get("includeSecret") === "on",
@@ -821,6 +944,10 @@ export async function createNpcFromForm(formData, options = {}) {
 
     if (encounterMode === "shop") {
       await createShopFromForm(formData);
+      return;
+    }
+    if (encounterMode === "loot") {
+      await createLootFromForm(formData);
       return;
     }
 
@@ -1215,6 +1342,189 @@ async function createShopFromForm(formData) {
   );
 }
 
+async function createLootFromForm(formData) {
+  const importPayload = parseLootImportPayload(formData.get("lootImportPayload"));
+  const hasImportPayload = !!importPayload;
+
+  const fallbackType = normalizeLootType(formData.get("lootType"));
+  const lootType = normalizeLootType(importPayload?.lootType || fallbackType);
+  const fallbackCount = clampRangeValue(formData.get("lootCount"), 1, 60, 12);
+  const itemCount = clampRangeValue(importPayload?.itemCount, 1, 60, fallbackCount);
+  const fallbackBudget = normalizeBudgetOption(formData.get("lootBudget") || formData.get("budget"));
+  const budget = normalizeBudgetOption(importPayload?.lootBudget || fallbackBudget);
+  const fallbackTierInput = String(formData.get("lootTier") || "auto");
+  const resolvedTierInput = String(importPayload?.lootTier ?? fallbackTierInput ?? "auto");
+  const tier =
+    resolvedTierInput === "auto"
+      ? getAutoTier()
+      : clampRangeValue(resolvedTierInput, 1, 4, getAutoTier());
+  const fallbackAllowMagic = formData.get("lootAllowMagic") === "on";
+  const fallbackIncludeCoins = formData.get("lootIncludeCoins") === "on";
+  const fallbackUniqOnly = formData.get("lootUniqOnly") === "on";
+  const allowMagic = parseBooleanLoose(importPayload?.lootAllowMagic, fallbackAllowMagic);
+  const includeCoins = parseBooleanLoose(importPayload?.lootIncludeCoins, fallbackIncludeCoins);
+  const uniqOnly = parseBooleanLoose(importPayload?.lootUniqOnly, fallbackUniqOnly);
+  let folderId = await ensureLootFolder(lootType);
+  setLastFolderId(folderId || "");
+
+  let stockItems = [];
+  let importStats = null;
+  if (hasImportPayload) {
+    importStats = await buildLootInventoryFromImport({
+      importPayload,
+      lootType,
+      itemCount,
+      budget,
+      allowMagic,
+      uniqueOnly: uniqOnly
+    });
+    stockItems = Array.isArray(importStats?.items) ? importStats.items : [];
+  } else {
+    stockItems = await buildLootInventory({
+      lootType,
+      itemCount,
+      budget,
+      allowMagic,
+      uniqueOnly: uniqOnly
+    });
+  }
+
+  const coinsFromImport = normalizeImportedLootCurrency(importPayload?.coins);
+  const coins = coinsFromImport || buildLootCoins({ tier, budget, includeCoins });
+  const lootName = i18nFormat("ui.loot.defaultNameByType", { type: getLootTypeLabel(lootType) });
+  const actor = await createLootContainerActor({
+    lootName,
+    lootType,
+    budget,
+    tier,
+    folderId,
+    stockItems,
+    coins
+  });
+
+  if (!actor) {
+    ui.notifications?.warn(i18nText("ui.loot.warnCreationFailed"));
+    return;
+  }
+
+  if (Number(importStats?.missing || 0) > 0) {
+    ui.notifications?.warn(
+      i18nFormat("ui.loot.warnImportItemsMissing", {
+        missing: Number(importStats.missing),
+        resolved: Number(importStats.resolved || 0)
+      })
+    );
+  }
+
+  ui.notifications?.info(
+    i18nFormat("ui.loot.infoCreated", {
+      name: lootName,
+      count: stockItems.length,
+      preview: actor?.name || i18nText("common.unnamed")
+    })
+  );
+}
+
+async function buildLootInventory({ lootType, itemCount, budget, allowMagic, uniqueOnly = true }) {
+  const desired = clampRangeValue(itemCount, 1, 60, 12);
+  const type = normalizeLootType(lootType);
+  if (type === "coins") return [];
+  const packs = uniquePackNames([
+    ...getPacks("weapons"),
+    ...getPacks("loot"),
+    ...getPacks("spells")
+  ]);
+  let docs = getCachedItemDocsFromPacks(packs);
+  if (!docs.length) docs = await collectItemDocsFromPacks(packs);
+  const pools = buildLootPoolsFromCache(docs, allowMagic);
+  if (!pools.mixed.length) return [];
+
+  const result = [];
+  const seen = new Set();
+  const plan = buildLootCategoryPlan(type, desired);
+  const maxAttempts = Math.max(desired * 12, 30);
+  let attempts = 0;
+
+  while (result.length < desired && attempts < maxAttempts) {
+    const plannedCategory = plan[result.length] || (type === "mixed" ? pickWeightedLootCategory() : type);
+    const doc =
+      pickLootDocFromPool(pools[plannedCategory], seen, budget, allowMagic, uniqueOnly) ||
+      pickLootDocFromPool(pools.gear, seen, budget, allowMagic, uniqueOnly) ||
+      pickLootDocFromPool(pools.mixed, seen, budget, allowMagic, uniqueOnly);
+    attempts += 1;
+    if (!doc) continue;
+    const item = toLootItemData(doc, plannedCategory);
+    if (!item?.name) continue;
+    const key = normalizeShopSearchKey(item.name);
+    if (uniqueOnly && (!key || seen.has(key))) continue;
+    if (uniqueOnly && key) seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
+async function buildLootInventoryFromImport({
+  importPayload,
+  lootType,
+  itemCount,
+  budget,
+  allowMagic,
+  uniqueOnly = true
+}) {
+  const payload = importPayload && typeof importPayload === "object" ? importPayload : null;
+  const refs = normalizeShopItemRefs(payload?.items);
+  const type = normalizeLootType(payload?.lootType || lootType);
+  const desiredFallback = clampRangeValue(payload?.itemCount, 1, 60, clampRangeValue(itemCount, 1, 60, 12));
+  if (!refs.length) {
+    const items = await buildLootInventory({
+      lootType: type,
+      itemCount: desiredFallback,
+      budget,
+      allowMagic,
+      uniqueOnly
+    });
+    return { items, resolved: 0, missing: 0 };
+  }
+
+  const packs = uniquePackNames([
+    ...getPacks("weapons"),
+    ...getPacks("loot"),
+    ...getPacks("spells")
+  ]);
+  let docs = getCachedItemDocsFromPacks(packs);
+  if (!docs.length) docs = await collectItemDocsFromPacks(packs);
+  const pools = buildLootPoolsFromCache(docs, allowMagic);
+  if (!pools.mixed.length) return { items: [], resolved: 0, missing: refs.length };
+
+  const result = [];
+  const seen = new Set();
+  let resolved = 0;
+  let missing = 0;
+
+  for (const ref of refs) {
+    const doc = findShopDocByImportRef(pools.mixed, ref, allowMagic);
+    if (!doc) {
+      missing += 1;
+      continue;
+    }
+    const category = inferLootCategoryFromDoc(doc, type);
+    const item = toLootItemData(doc, category);
+    if (!item?.name) {
+      missing += 1;
+      continue;
+    }
+    applyImportedLootItemOverrides(item, ref);
+    const key = normalizeShopSearchKey(item.name);
+    if (uniqueOnly && (!key || seen.has(key))) continue;
+    if (uniqueOnly && key) seen.add(key);
+    result.push(item);
+    resolved += 1;
+  }
+
+  return { items: result, resolved, missing };
+}
+
 async function buildShopInventory({ shopType, itemCount, budget, allowMagic }) {
   const desired = clampRangeValue(itemCount, 1, 60, 12);
   const type = normalizeShopType(shopType);
@@ -1490,11 +1800,57 @@ function buildShopPoolsFromCache(docs, allowMagic) {
   return out;
 }
 
+function buildLootPoolsFromCache(docs, allowMagic) {
+  const list = Array.isArray(docs) ? docs.filter(Boolean) : [];
+  const withType = list.filter((doc) => {
+    const type = String(doc?.type || "").toLowerCase();
+    if (!["weapon", "equipment", "loot", "consumable", "tool", "spell"].includes(type)) return false;
+    if (!allowMagic && type === "spell") return false;
+    return isAllowedItemDoc(doc, allowMagic);
+  });
+
+  const out = {
+    mixed: withType,
+    gear: withType.filter((doc) => {
+      const type = String(doc?.type || "").toLowerCase();
+      return ["equipment", "loot", "tool"].includes(type) && !isArmorShopDoc(doc);
+    }),
+    consumables: withType.filter((doc) => {
+      const type = String(doc?.type || "").toLowerCase();
+      return type === "consumable" && !isScrollShopDoc(doc);
+    }),
+    weapons: withType.filter((doc) => String(doc?.type || "").toLowerCase() === "weapon"),
+    armor: withType.filter((doc) => isArmorShopDoc(doc)),
+    scrolls: withType.filter((doc) => isScrollShopDoc(doc))
+  };
+
+  if (!out.gear.length) {
+    out.gear = withType.filter((doc) => {
+      const type = String(doc?.type || "").toLowerCase();
+      return ["equipment", "loot", "tool", "consumable"].includes(type);
+    });
+  }
+  if (!out.consumables.length) {
+    out.consumables = withType.filter((doc) => String(doc?.type || "").toLowerCase() === "consumable");
+  }
+  if (!out.mixed.length) out.mixed = withType;
+  return out;
+}
+
 function buildShopCategoryPlan(shopType, desired) {
   const type = normalizeShopType(shopType);
   if (type !== "market") return Array.from({ length: desired }, () => type);
   const categories = [];
   for (let i = 0; i < desired; i++) categories.push(pickWeightedShopCategory());
+  return categories;
+}
+
+function buildLootCategoryPlan(lootType, desired) {
+  const type = normalizeLootType(lootType);
+  if (type === "coins") return [];
+  if (type !== "mixed") return Array.from({ length: desired }, () => type);
+  const categories = [];
+  for (let i = 0; i < desired; i++) categories.push(pickWeightedLootCategory());
   return categories;
 }
 
@@ -1507,6 +1863,17 @@ function pickWeightedShopCategory() {
     if (roll <= 0) return entry.type;
   }
   return SHOP_TYPE_WEIGHTS[SHOP_TYPE_WEIGHTS.length - 1]?.type || "general";
+}
+
+function pickWeightedLootCategory() {
+  const total = LOOT_TYPE_WEIGHTS.reduce((sum, entry) => sum + Number(entry.weight || 0), 0);
+  if (!total) return "gear";
+  let roll = Math.random() * total;
+  for (const entry of LOOT_TYPE_WEIGHTS) {
+    roll -= Number(entry.weight || 0);
+    if (roll <= 0) return entry.type;
+  }
+  return LOOT_TYPE_WEIGHTS[LOOT_TYPE_WEIGHTS.length - 1]?.type || "gear";
 }
 
 function pickShopDocFromPool(pool, seen, budget, allowMagic) {
@@ -1544,6 +1911,39 @@ function pickShopDocFromPool(pool, seen, budget, allowMagic) {
   return pickRandom(preferred);
 }
 
+function pickLootDocFromPool(pool, seen, budget, allowMagic, uniqueOnly = true) {
+  const source = Array.isArray(pool) ? pool : [];
+  if (!source.length) return null;
+  const candidates = source.filter((doc) => {
+    const key = normalizeShopSearchKey(doc?.name);
+    if (uniqueOnly && key && seen.has(key)) return false;
+    return isAllowedItemDoc(doc, allowMagic);
+  });
+  if (!candidates.length) return null;
+
+  const preferred = preferDocsByInterfaceLanguage(candidates);
+  const priced = preferred.filter((doc) => {
+    const cp = getItemPriceValue(doc);
+    return Number.isFinite(cp) && cp > 0;
+  });
+  const withinBudget = priced.filter((doc) => isWithinBudget(doc, budget, allowMagic));
+  if (withinBudget.length) return pickRandom(withinBudget);
+
+  if (priced.length) {
+    const range = getBudgetRange(budget, allowMagic);
+    const target = Math.round((Number(range?.min || 0) + Number(range?.max || 0)) / 2);
+    let best = null;
+    for (const doc of priced) {
+      const cp = Number(getItemPriceValue(doc) || 0);
+      const distance = Math.abs(cp - target);
+      if (!best || distance < best.distance) best = { doc, distance };
+    }
+    if (best?.doc) return best.doc;
+  }
+
+  return pickRandom(preferred);
+}
+
 function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
   const item = cloneItemData(toItemData(doc));
   if (!item || typeof item !== "object") return null;
@@ -1568,6 +1968,136 @@ function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
   const quantity = getShopItemQuantity(item, category);
   if (Number.isFinite(quantity) && quantity > 0) item.system.quantity = quantity;
   return item;
+}
+
+function toLootItemData(doc, category) {
+  const item = cloneItemData(toItemData(doc));
+  if (!item || typeof item !== "object") return null;
+  item.system = item.system && typeof item.system === "object" ? item.system : {};
+  item.flags = item.flags && typeof item.flags === "object" ? item.flags : {};
+  item.flags[MODULE_ID] = item.flags[MODULE_ID] && typeof item.flags[MODULE_ID] === "object"
+    ? item.flags[MODULE_ID]
+    : {};
+
+  const sourceUuid = getSourceUuidForShopDoc(doc);
+  if (sourceUuid) {
+    item.flags[MODULE_ID].lootSourceUuid = sourceUuid;
+    item.flags.core = item.flags.core && typeof item.flags.core === "object" ? item.flags.core : {};
+    if (!item.flags.core.sourceId) item.flags.core.sourceId = sourceUuid;
+    item.flags.dnd5e = item.flags.dnd5e && typeof item.flags.dnd5e === "object" ? item.flags.dnd5e : {};
+    if (!item.flags.dnd5e.sourceId) item.flags.dnd5e.sourceId = sourceUuid;
+  }
+
+  if (item.system.equipped !== undefined) item.system.equipped = false;
+  if (item.system.proficient !== undefined) item.system.proficient = false;
+  const normalizedCategory = category === "gear" ? "general" : category;
+  const quantity = getShopItemQuantity(item, normalizedCategory);
+  if (Number.isFinite(quantity) && quantity > 0) item.system.quantity = quantity;
+  return item;
+}
+
+function inferLootCategoryFromDoc(doc, fallbackType = "mixed") {
+  if (isArmorShopDoc(doc)) return "armor";
+  if (isScrollShopDoc(doc)) return "scrolls";
+  if (String(doc?.type || "").toLowerCase() === "weapon") return "weapons";
+  if (isAlchemyShopDoc(doc) || String(doc?.type || "").toLowerCase() === "consumable") return "consumables";
+  const type = normalizeLootType(fallbackType);
+  return type === "mixed" ? "gear" : type;
+}
+
+function applyImportedLootItemOverrides(item, ref) {
+  if (!item || !ref) return;
+  const qty = clampRangeValue(ref.quantity, 1, 9999, null);
+  if (Number.isFinite(qty) && qty > 0) {
+    item.system = item.system && typeof item.system === "object" ? item.system : {};
+    item.system.quantity = qty;
+  }
+
+  const priceGp = normalizeImportedItemPriceGp(ref);
+  if (Number.isFinite(priceGp) && priceGp > 0) {
+    item.system = item.system && typeof item.system === "object" ? item.system : {};
+    item.system.price = {
+      value: Math.max(1, Math.round(priceGp)),
+      denomination: "gp"
+    };
+  }
+}
+
+function buildLootCoins({ tier, budget, includeCoins = true }) {
+  const out = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
+  if (!includeCoins) return out;
+
+  const resolvedTier = clampRangeValue(tier, 1, 4, 1);
+  const resolvedBudget = normalizeBudgetOption(budget);
+  const scale = {
+    poor: 0.7,
+    normal: 1,
+    well: 1.55,
+    elite: 2.35
+  }[resolvedBudget] || 1;
+
+  const lootData = DATA_CACHE.loot;
+  const coinRange = lootData?.coins?.[String(resolvedTier)] || { gp: [0, 10], sp: [0, 25] };
+  const gpMin = Number(coinRange?.gp?.[0] || 0);
+  const gpMax = Number(coinRange?.gp?.[1] || 10);
+  const spMin = Number(coinRange?.sp?.[0] || 0);
+  const spMax = Number(coinRange?.sp?.[1] || 25);
+
+  out.gp = Math.max(0, Math.round(randInt(gpMin, gpMax) * scale));
+  out.sp = Math.max(0, Math.round(randInt(spMin, spMax) * scale));
+  out.cp = Math.max(0, Math.round(randInt(0, 10 + resolvedTier * 5) * scale));
+  out.ep = resolvedTier >= 2 ? Math.max(0, Math.round(randInt(0, resolvedTier * 4) * scale)) : 0;
+  out.pp = resolvedTier >= 3
+    ? Math.max(0, Math.round(randInt(0, resolvedTier * 2) * Math.max(1, scale - 0.2)))
+    : 0;
+  return out;
+}
+
+async function createLootContainerActor({ lootName, lootType, budget, tier, folderId, stockItems, coins }) {
+  const normalizedCoins = normalizeImportedLootCurrency(coins) || { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
+  const stock = (stockItems || []).map((item) => cloneItemData(item)).filter(Boolean);
+  const coinSummary = ["pp", "gp", "ep", "sp", "cp"]
+    .map((key) => `${Number(normalizedCoins[key] || 0)} ${key}`)
+    .join(", ");
+  const biography = [
+    `<p><strong>${escapeHtml(i18nText("ui.loot.labelType"))}</strong> ${escapeHtml(getLootTypeLabel(lootType))}</p>`,
+    `<p><strong>${escapeHtml(i18nText("ui.loot.labelBudget"))}</strong> ${escapeHtml(i18nText(`ui.dialog.budget${capitalizeBudgetKey(budget)}`))}</p>`,
+    `<p><strong>${escapeHtml(i18nText("ui.loot.labelTier"))}</strong> T${clampRangeValue(tier, 1, 4, 1)}</p>`,
+    `<p><strong>${escapeHtml(i18nText("ui.loot.labelCoins"))}</strong> ${escapeHtml(coinSummary)}</p>`
+  ].join("");
+
+  const actorData = {
+    name: lootName,
+    type: "npc",
+    folder: folderId || null,
+    img: LOOT_CONTAINER_ICON_PATH,
+    prototypeToken: {
+      img: LOOT_CONTAINER_ICON_PATH,
+      texture: { src: LOOT_CONTAINER_ICON_PATH }
+    },
+    items: stock,
+    flags: {
+      [MODULE_ID]: {
+        lootContainer: true,
+        lootType: normalizeLootType(lootType),
+        lootBudget: normalizeBudgetOption(budget),
+        lootTier: clampRangeValue(tier, 1, 4, 1)
+      }
+    },
+    system: {
+      currency: normalizedCoins,
+      details: {
+        biography: { value: biography }
+      }
+    }
+  };
+
+  try {
+    return await Actor.create(actorData);
+  } catch (err) {
+    console.warn("NPC Button: Failed to create loot container actor.", err);
+    return null;
+  }
 }
 
 function getShopItemQuantity(item, category) {
@@ -1671,6 +2201,15 @@ async function createShopkeeperActor({ shopName, budget, tier, folderId, stockIt
 
   const actorData = await buildActorData(generated, folderId || null);
   actorData.name = i18nFormat("ui.shop.shopkeeperActorName", { shop: shopName });
+  actorData.img = SHOPKEEPER_ICON_PATH;
+  actorData.prototypeToken = actorData.prototypeToken && typeof actorData.prototypeToken === "object"
+    ? actorData.prototypeToken
+    : {};
+  actorData.prototypeToken.img = SHOPKEEPER_ICON_PATH;
+  actorData.prototypeToken.texture = actorData.prototypeToken.texture && typeof actorData.prototypeToken.texture === "object"
+    ? actorData.prototypeToken.texture
+    : {};
+  actorData.prototypeToken.texture.src = SHOPKEEPER_ICON_PATH;
   const stock = (stockItems || []).map((item) => cloneItemData(item)).filter(Boolean);
   actorData.items = replaceGeneratedItems
     ? stock
@@ -1838,9 +2377,28 @@ function getShopTypeLabel(shopType) {
   return i18nText(keyMap[type] || keyMap.market);
 }
 
+function getLootTypeLabel(lootType) {
+  const type = normalizeLootType(lootType);
+  const keyMap = {
+    mixed: "ui.dialog.lootTypeMixed",
+    coins: "ui.dialog.lootTypeCoins",
+    gear: "ui.dialog.lootTypeGear",
+    consumables: "ui.dialog.lootTypeConsumables",
+    weapons: "ui.dialog.lootTypeWeapons",
+    armor: "ui.dialog.lootTypeArmor",
+    scrolls: "ui.dialog.lootTypeScrolls"
+  };
+  return i18nText(keyMap[type] || keyMap.mixed);
+}
+
 function normalizeShopType(value) {
   const type = String(value || "").trim().toLowerCase();
   return SHOP_TYPES.has(type) ? type : "market";
+}
+
+function normalizeLootType(value) {
+  const type = String(value || "").trim().toLowerCase();
+  return LOOT_TYPES.has(type) ? type : "mixed";
 }
 
 function normalizeBudgetOption(value) {
@@ -1934,6 +2492,84 @@ function buildManualShopPrompt(context = {}) {
   ].join("\n");
 }
 
+function collectLootPromptContext(form) {
+  const lootType = normalizeLootType(form.find("select[name='lootType']").val());
+  const lootBudget = normalizeBudgetOption(form.find("select[name='lootBudget']").val());
+  const itemCount = clampRangeValue(form.find("input[name='lootCount']").val(), 1, 60, 12);
+  const tierInput = String(form.find("select[name='lootTier']").val() || "auto");
+  const tier = tierInput === "auto" ? getAutoTier() : clampRangeValue(tierInput, 1, 4, 1);
+  const allowMagic = !!form.find("input[name='lootAllowMagic']").prop("checked");
+  const includeCoins = !!form.find("input[name='lootIncludeCoins']").prop("checked");
+  const uniqOnly = !!form.find("input[name='lootUniqOnly']").prop("checked");
+  const langCode = String(game?.i18n?.lang || "en").trim() || "en";
+  const langName = langCode.startsWith("ru") ? "Russian" : langCode.startsWith("en") ? "English" : langCode;
+  return {
+    lootType,
+    lootTypeLabel: getLootTypeLabel(lootType),
+    lootBudget,
+    itemCount,
+    tier,
+    allowMagic,
+    includeCoins,
+    uniqOnly,
+    language: { code: langCode, name: langName }
+  };
+}
+
+function buildManualLootPrompt(context = {}) {
+  const itemCount = clampRangeValue(context.itemCount, 1, 60, 12);
+  const type = normalizeLootType(context.lootType);
+  const budget = normalizeBudgetOption(context.lootBudget);
+  const tier = clampRangeValue(context.tier, 1, 4, 1);
+  const allowMagic = !!context.allowMagic;
+  const includeCoins = !!context.includeCoins;
+  const uniqOnly = !!context.uniqOnly;
+  const language = context.language?.name || "English";
+  const languageCode = context.language?.code || "en";
+  const typeLabel = String(context.lootTypeLabel || getLootTypeLabel(type)).trim();
+
+  return [
+    "Output exactly one ```json code block``` and nothing else.",
+    "Inside the block, output one valid JSON object parseable by JSON.parse.",
+    "Use this exact schema:",
+    "{",
+    `  \"lootType\": \"${type}\",`,
+    `  \"lootBudget\": \"${budget}\",`,
+    `  \"lootTier\": ${tier},`,
+    `  \"lootAllowMagic\": ${allowMagic ? "true" : "false"},`,
+    `  \"lootIncludeCoins\": ${includeCoins ? "true" : "false"},`,
+    `  \"lootUniqOnly\": ${uniqOnly ? "true" : "false"},`,
+    "  \"itemCount\": 12,",
+    "  \"coins\": { \"pp\": 0, \"gp\": 0, \"ep\": 0, \"sp\": 0, \"cp\": 0 },",
+    "  \"items\": [",
+    "    {",
+    "      \"name\": \"localized item name\",",
+    "      \"lookup\": \"English canonical item name\",",
+    "      \"quantity\": 1",
+    "    }",
+    "  ]",
+    "}",
+    "Rules:",
+    "- \"lootType\" must be one of: mixed, coins, gear, consumables, weapons, armor, scrolls.",
+    "- \"lootBudget\" must be one of: poor, normal, well, elite.",
+    "- \"lootTier\" must be an integer from 1 to 4.",
+    "- \"items\" must be an array of objects.",
+    "- \"lookup\" should be English canonical D&D item name when possible.",
+    "- Write \"name\" in interface language when possible.",
+    "- No null values, no comments, no trailing commas.",
+    "",
+    "Loot context:",
+    `- Type: ${type} (${typeLabel})`,
+    `- Budget: ${budget}`,
+    `- Tier: T${tier}`,
+    `- Target item count: ${itemCount}`,
+    `- Allow magic: ${allowMagic ? "yes" : "no"}`,
+    `- Include coins: ${includeCoins ? "yes" : "no"}`,
+    `- Unique items only: ${uniqOnly ? "yes" : "no"}`,
+    `- Interface language: ${language} (${languageCode})`
+  ].join("\n");
+}
+
 function openImportShopJsonDialog({ onImport }) {
   new Dialog({
     title: i18nText("ui.dialog.shopImportTitle"),
@@ -1981,6 +2617,51 @@ function openImportShopJsonDialog({ onImport }) {
   }).render(true);
 }
 
+function openImportLootJsonDialog({ onImport }) {
+  new Dialog({
+    title: i18nText("ui.dialog.lootImportTitle"),
+    content: `
+      <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+          ${i18nHtml("ui.dialog.lootImportDescription")}
+        </p>
+        <textarea name="lootJson" style="width:100%;min-height:18rem;" placeholder='${i18nHtml("ui.dialog.lootImportPlaceholder")}'></textarea>
+      </div>
+    `,
+    buttons: {
+      import: {
+        label: i18nText("ui.dialog.lootImportJson"),
+        callback: async (html) => {
+          const rawJson = String(html.find("textarea[name='lootJson']").val() || "").trim();
+          if (!rawJson) {
+            ui.notifications?.warn(i18nText("ui.loot.warnPasteJsonFirst"));
+            return;
+          }
+          try {
+            const parsed = parseLooseJsonObject(rawJson);
+            const payload = normalizeImportedLootPayload(parsed);
+            if (!payload) throw new Error(i18nText("ui.loot.errorImportInvalidShape"));
+            if (typeof onImport === "function") await onImport(payload);
+            ui.notifications?.info(
+              i18nFormat("ui.loot.infoImportApplied", { count: Number(payload.items?.length || 0) })
+            );
+          } catch (err) {
+            console.error("NPC Button: Failed to import loot JSON.", err);
+            const reason = String(err?.message || "").trim();
+            ui.notifications?.error(
+              reason
+                ? i18nFormat("ui.loot.errorImportFailedWithReason", { reason })
+                : i18nText("ui.loot.errorImportFailed")
+            );
+          }
+        }
+      },
+      cancel: { label: i18nText("common.cancel") }
+    },
+    default: "import"
+  }).render(true);
+}
+
 function applyImportedShopPayloadToForm(form, payload) {
   if (!form?.length || !payload || typeof payload !== "object") return;
   const type = normalizeShopType(payload.shopType);
@@ -2002,12 +2683,40 @@ function applyImportedShopPayloadToForm(form, payload) {
   }
 }
 
+function applyImportedLootPayloadToForm(form, payload) {
+  if (!form?.length || !payload || typeof payload !== "object") return;
+  const type = normalizeLootType(payload.lootType);
+  const budget = normalizeBudgetOption(payload.lootBudget);
+  const count = clampRangeValue(payload.itemCount, 1, 60, 12);
+  const tierInput = String(payload.lootTier ?? "auto");
+  const tier = tierInput === "auto" ? "auto" : String(clampRangeValue(tierInput, 1, 4, 1));
+
+  form.find("select[name='lootType']").val(type);
+  form.find("select[name='lootBudget']").val(budget);
+  form.find("input[name='lootCount']").val(count);
+  form.find("select[name='lootTier']").val(tier);
+  form.find("input[name='lootAllowMagic']").prop("checked", !!payload.lootAllowMagic);
+  form.find("input[name='lootIncludeCoins']").prop("checked", !!payload.lootIncludeCoins);
+  form.find("input[name='lootUniqOnly']").prop("checked", !!payload.lootUniqOnly);
+}
+
 function parseShopImportPayload(rawValue) {
   const raw = String(rawValue || "").trim();
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
     return normalizeImportedShopPayload(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function parseLootImportPayload(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeImportedLootPayload(parsed);
   } catch {
     return null;
   }
@@ -2080,6 +2789,100 @@ function normalizeImportedShopPayload(parsed) {
     shopFolder,
     items
   };
+}
+
+function normalizeImportedLootPayload(parsed) {
+  if (parsed === null || parsed === undefined) return null;
+  if (Array.isArray(parsed)) {
+    return {
+      lootType: "mixed",
+      lootBudget: "normal",
+      lootTier: "auto",
+      lootAllowMagic: false,
+      lootIncludeCoins: true,
+      lootUniqOnly: true,
+      itemCount: Math.max(1, Math.min(60, parsed.length || 1)),
+      coins: null,
+      items: normalizeShopItemRefs(parsed)
+    };
+  }
+  if (typeof parsed !== "object") return null;
+
+  const lootBlock = parsed.loot && typeof parsed.loot === "object" ? parsed.loot : {};
+  const source = { ...parsed, ...lootBlock };
+  const itemSource =
+    source.items ??
+    source.inventory ??
+    source.lootItems ??
+    source.stock ??
+    source.goods ??
+    source.treasure ??
+    [];
+  const items = normalizeShopItemRefs(itemSource);
+
+  const lootType = normalizeLootType(source.lootType || source.type || source.category);
+  const lootBudget = normalizeBudgetOption(source.lootBudget || source.budget);
+  const rawTier = source.lootTier ?? source.tier ?? source.level ?? "auto";
+  const lootTier =
+    String(rawTier).trim().toLowerCase() === "auto"
+      ? "auto"
+      : clampRangeValue(rawTier, 1, 4, "auto");
+  const itemCount = clampRangeValue(source.itemCount ?? source.count ?? items.length, 1, 60, Math.max(1, items.length || 12));
+  const lootAllowMagic = parseBooleanLoose(source.lootAllowMagic ?? source.allowMagic, false);
+  const lootIncludeCoins = parseBooleanLoose(source.lootIncludeCoins ?? source.includeCoins, true);
+  const lootUniqOnly = parseBooleanLoose(
+    source.lootUniqOnly ?? source.uniqueOnly ?? source.uniqOnly,
+    true
+  );
+  const coins = normalizeImportedLootCurrency(source.coins || source.currency);
+
+  const hasHints =
+    items.length > 0 ||
+    source.lootType !== undefined ||
+    source.type !== undefined ||
+    source.category !== undefined ||
+    source.lootBudget !== undefined ||
+    source.budget !== undefined ||
+    source.lootTier !== undefined ||
+    source.tier !== undefined ||
+    source.level !== undefined ||
+    source.itemCount !== undefined ||
+    source.count !== undefined ||
+    source.lootAllowMagic !== undefined ||
+    source.allowMagic !== undefined ||
+    source.lootIncludeCoins !== undefined ||
+    source.includeCoins !== undefined ||
+    source.lootUniqOnly !== undefined ||
+    source.uniqueOnly !== undefined ||
+    source.uniqOnly !== undefined ||
+    source.coins !== undefined ||
+    source.currency !== undefined;
+  if (!hasHints) return null;
+
+  return {
+    lootType,
+    lootBudget,
+    lootTier,
+    lootAllowMagic,
+    lootIncludeCoins,
+    lootUniqOnly,
+    itemCount,
+    coins,
+    items
+  };
+}
+
+function normalizeImportedLootCurrency(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out = { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
+  let hasAny = false;
+  for (const key of Object.keys(out)) {
+    const numeric = Number(value[key]);
+    if (!Number.isFinite(numeric)) continue;
+    out[key] = Math.max(0, Math.round(numeric));
+    hasAny = true;
+  }
+  return hasAny ? out : null;
 }
 
 function normalizeShopItemRefs(value, maxItems = 60, maxLength = 140) {

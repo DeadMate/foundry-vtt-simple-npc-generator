@@ -6,12 +6,13 @@
 
 # NPC Button (D&D 5e)
 
-Fast NPC, encounter, and shop generation for Foundry VTT `dnd5e`.
+Fast NPC, encounter, shop, and loot generation for Foundry VTT `dnd5e`.
 
-This module adds a single **NPC Button** to the Actors sidebar and gives you three workflows in one dialog:
+This module adds a single **NPC Button** to the Actors sidebar and gives you four workflows in one dialog:
 - **Main NPC**: create one or many playable NPCs.
 - **Encounter**: generate encounter-ready groups with auto balancing and foldering.
 - **Shop**: generate a shopkeeper actor with localized stock pulled from compendiums.
+- **Loot**: generate a loot container with configurable filters and optional ChatGPT JSON import.
 
 ## Highlights
 
@@ -26,6 +27,11 @@ This module adds a single **NPC Button** to the Actors sidebar and gives you thr
 - Automatic localized shop folders:
   - EN example: `Shop-Market-1`
   - RU example: `Магазин-Рынок-1`
+- Loot generator with loot types:
+  - `mixed`, `coins`, `gear`, `consumables`, `weapons`, `armor`, `scrolls`
+- Automatic localized loot folders:
+  - EN example: `Loot-Mixed-1`
+  - RU example: `Добыча-Смешанная-1`
 - Shop stock is added directly to the created shopkeeper actor (no separate table flow).
 - Shop prices come from compendium items, then roll with `+-30%`, and are normalized to integer `gp`.
 - Interface-language-aware compendium matching with English fallback.
@@ -54,6 +60,7 @@ https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases/latest/dow
    - **Main NPC** for single/batch NPCs
    - **Encounter** for group generation
    - **Shop** for shopkeeper + inventory
+   - **Loot** for loot container + generated/imported items
 5. Click **Create**.
 
 ## Generator Modes
@@ -77,8 +84,18 @@ https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases/latest/dow
 - Shop type, item count, budget, shopkeeper tier.
 - Optional custom shop name.
 - Optional magic items toggle.
+- Uses a dedicated shopkeeper icon for generated shop actors.
 - Creates one shopkeeper actor and fills their inventory with generated/imported stock.
 - Creates/uses localized numbered folders by shop type.
+
+### Loot
+
+- Loot type (`mixed`, `coins`, `gear`, `consumables`, `weapons`, `armor`, `scrolls`).
+- Item count, budget, tier, optional magic filter.
+- Optional coin generation and unique-only items.
+- Uses a dedicated loot-bag icon for generated loot containers.
+- Creates one loot container actor with generated/imported items and currency.
+- Always creates/uses localized numbered folders by loot type.
 
 ## AI and Manual Workflows
 
@@ -100,6 +117,7 @@ OpenAI usage is GM-only and requires API key setup.
   - Main NPC JSON
   - Encounter JSON arrays
   - Shop JSON imports (including item lists)
+  - Loot JSON imports (including item lists and currency)
 
 ## Language and Matching
 

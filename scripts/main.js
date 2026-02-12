@@ -3,6 +3,47 @@ import { t } from "./i18n.js";
 import { registerOpenAiSettings } from "./openai.js";
 import { addNpcButton, showChangelogIfUpdated } from "./ui.js";
 
+let npcButtonObserver = null;
+
+function ensureNpcButtonInActorsSidebar(contextHtml = null) {
+  const resolveActorsRoots = (source) => {
+    const roots = [];
+    const $source = source?.jquery ? source : $(source);
+    if (!$source?.length) return roots;
+
+    const rootSelector = ".sidebar-tab[data-tab='actors'], [data-tab='actors'], #actors, .sidebar-tab.actors, .tab.actors";
+    if ($source.is(rootSelector)) roots.push($source.first());
+    const nested = $source.find(rootSelector).toArray();
+    for (const entry of nested) roots.push($(entry));
+    return roots;
+  };
+
+  const targets = [];
+  for (const root of resolveActorsRoots(contextHtml)) targets.push(root);
+
+  const globalCandidates = [
+    $("#sidebar"),
+    $("#sidebar .app.sidebar"),
+    $("#ui-right")
+  ];
+  for (const candidate of globalCandidates) {
+    for (const root of resolveActorsRoots(candidate)) targets.push(root);
+  }
+
+  const seen = new Set();
+  for (const target of targets) {
+    const node = target?.[0];
+    if (!node) continue;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    try {
+      addNpcButton(target);
+    } catch (err) {
+      console.warn(`${MODULE_ID}: failed to add sidebar button`, err);
+    }
+  }
+}
+
 Hooks.once("init", () => {
   registerOpenAiSettings();
 
@@ -37,10 +78,33 @@ Hooks.once("ready", () => {
     ui.notifications?.warn(t("main.warnWrongSystem"));
   }
   showChangelogIfUpdated();
+  ensureNpcButtonInActorsSidebar();
+  setTimeout(() => ensureNpcButtonInActorsSidebar(), 0);
+  setTimeout(() => ensureNpcButtonInActorsSidebar(), 250);
+  setTimeout(() => ensureNpcButtonInActorsSidebar(), 1000);
+
+  if (!npcButtonObserver) {
+    const sidebar = document.querySelector("#sidebar");
+    if (sidebar && typeof MutationObserver !== "undefined") {
+      npcButtonObserver = new MutationObserver(() => {
+        ensureNpcButtonInActorsSidebar();
+      });
+      npcButtonObserver.observe(sidebar, { childList: true, subtree: true });
+    }
+  }
 });
 
 Hooks.on("renderActorDirectory", (app, html) => {
-  addNpcButton(html);
+  ensureNpcButtonInActorsSidebar(html);
+});
+
+Hooks.on("renderDocumentDirectory", (app, html) => {
+  const isActorDirectory =
+    app?.documentName === "Actor" ||
+    app?.collection?.documentName === "Actor" ||
+    app?.options?.id === "actors";
+  if (!isActorDirectory) return;
+  ensureNpcButtonInActorsSidebar(html);
 });
 
 Hooks.on("renderSidebarTab", (app, html) => {
@@ -49,5 +113,15 @@ Hooks.on("renderSidebarTab", (app, html) => {
     app?.tabName === "actors" ||
     app?.tab?.id === "actors";
   if (!isActorsTab) return;
-  addNpcButton(html);
+  ensureNpcButtonInActorsSidebar(html);
+});
+
+Hooks.on("renderSidebar", (app, html) => {
+  ensureNpcButtonInActorsSidebar(html);
+});
+
+Hooks.on("changeSidebarTab", (app, tab) => {
+  const tabId = String(tab || "").trim().toLowerCase();
+  if (tabId !== "actors") return;
+  setTimeout(() => ensureNpcButtonInActorsSidebar(), 0);
 });
