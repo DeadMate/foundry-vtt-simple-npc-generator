@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.9.3
 - Add new **Loot** generator tab with type/budget/tier filters, coin toggle, unique-only option, and ChatGPT prompt/import workflow.
 - Add dedicated actor/token icons for generated **Shop** and **Loot** containers.
 - Fix Actors sidebar button rendering stability (single button, no overlay duplicates).
