@@ -5,10 +5,13 @@
 
 import { COMPENDIUMS } from "./constants.js";
 import { DATA_CACHE } from "./data-loader.js";
+import { getPackIndex } from "./cache.js";
 import { pickRandom, normalizeUuid, cloneData, toItemData, escapeHtml } from "./utils.js";
 
 /** Promise for ongoing species load - prevents race condition */
 let SPECIES_LOAD_PROMISE = null;
+const SPECIES_INDEX_FIELDS = ["type", "name"];
+const SPECIES_INDEX_MAX_CONCURRENCY = 4;
 const SPECIES_ITEM_TYPES = new Set(["race", "species"]);
 const ACTOR_SIZE_ALIASES = {
   tiny: "tiny",
@@ -59,49 +62,65 @@ export function getSpeciesPacks() {
  */
 export async function getSpeciesEntries() {
   // Return cached entries if available
-  if (DATA_CACHE.speciesEntries?.length) return DATA_CACHE.speciesEntries;
+  if (Array.isArray(DATA_CACHE.speciesEntries)) return DATA_CACHE.speciesEntries;
 
   // FIX: Use promise-based locking to prevent race condition
   if (SPECIES_LOAD_PROMISE) return SPECIES_LOAD_PROMISE;
 
   SPECIES_LOAD_PROMISE = (async () => {
     const entries = [];
-    let packNames = getSpeciesPacks();
+    let packNames = Array.from(new Set(getSpeciesPacks()));
 
     if (!packNames.length) {
       // Fallback: scan all Item packs and keep those containing race/species entries
+      const candidatePacks = [];
       for (const pack of game.packs || []) {
         if (pack.documentName !== "Item") continue;
         const systemId = pack.metadata?.system;
         if (systemId && systemId !== "dnd5e") continue;
-        try {
-          const index = await pack.getIndex({ fields: ["type", "name"] });
-          if (index.some((e) => ["race", "species"].includes(String(e.type || "").toLowerCase()))) {
-            packNames.push(pack.collection);
-          }
-        } catch {
-          // ignore
-        }
+        candidatePacks.push(pack);
       }
-      packNames = Array.from(new Set(packNames));
+
+      const detected = await mapWithConcurrency(
+        candidatePacks,
+        SPECIES_INDEX_MAX_CONCURRENCY,
+        async (pack) => {
+          try {
+            const index = await getPackIndex(pack, SPECIES_INDEX_FIELDS);
+            return index.some((entry) => SPECIES_ITEM_TYPES.has(String(entry?.type || "").toLowerCase()))
+              ? pack.collection
+              : null;
+          } catch {
+            return null;
+          }
+        }
+      );
+      packNames = Array.from(new Set(detected.filter(Boolean)));
     }
 
-    for (const packName of packNames) {
-      const pack = game.packs?.get(packName);
-      if (!pack) continue;
-      const index = await pack.getIndex({ fields: ["type", "name"] });
-      for (const entry of index) {
-        if (!entry?.name) continue;
-        const type = String(entry.type || "").toLowerCase();
-        if (!SPECIES_ITEM_TYPES.has(type)) continue;
-        entries.push({
-          key: `${pack.collection}|${entry._id}`,
-          pack: pack.collection,
-          _id: entry._id,
-          name: entry.name
-        });
+    const packObjects = (packNames || [])
+      .map((packName) => game.packs?.get(packName))
+      .filter(Boolean);
+    const byPackEntries = await mapWithConcurrency(
+      packObjects,
+      SPECIES_INDEX_MAX_CONCURRENCY,
+      async (pack) => {
+        try {
+          const index = await getPackIndex(pack, SPECIES_INDEX_FIELDS);
+          return index
+            .filter((entry) => entry?.name && SPECIES_ITEM_TYPES.has(String(entry?.type || "").toLowerCase()))
+            .map((entry) => ({
+              key: `${pack.collection}|${entry._id}`,
+              pack: pack.collection,
+              _id: entry._id,
+              name: entry.name
+            }));
+        } catch {
+          return [];
+        }
       }
-    }
+    );
+    entries.push(...byPackEntries.flat());
 
     DATA_CACHE.speciesEntries = entries.sort((a, b) => a.name.localeCompare(b.name));
     return DATA_CACHE.speciesEntries;
@@ -456,4 +475,23 @@ export async function grantItemsByUuid(actor, uuids) {
 export function resetSpeciesLoadPromise() {
   SPECIES_LOAD_PROMISE = null;
   DATA_CACHE.speciesEntries = null;
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  const source = Array.isArray(items) ? items : [];
+  const limit = Math.max(1, Number(concurrency) || 1);
+  const runCount = Math.min(limit, source.length);
+  if (!runCount) return [];
+
+  const queue = source.slice();
+  const results = [];
+  const runners = Array.from({ length: runCount }, async () => {
+    while (queue.length) {
+      const item = queue.shift();
+      if (!item) continue;
+      results.push(await worker(item));
+    }
+  });
+  await Promise.all(runners);
+  return results;
 }

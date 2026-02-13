@@ -53,6 +53,27 @@ import {
 } from "./cache.js";
 import { getSearchStrings } from "./utils.js";
 
+const LOOKUP_CACHE_MAX_CLASS_KEYS = 128;
+const LOOKUP_CACHE_MAX_AI_INDEX_KEYS = 48;
+const AI_ITEM_RESOLVE_MAX_CONCURRENCY = 4;
+const NPC_GENERATOR_LOOKUP_CACHE = {
+  source: null,
+  spellPackNamesKey: "",
+  spellPackNames: null,
+  classFeatureCandidatesByKey: new Map(),
+  aiLookupIndexByKey: new Map()
+};
+
+function ensureNpcGeneratorLookupCacheState() {
+  const source = DATA_CACHE.compendiumCache?.packs || DATA_CACHE.compendiumLists || null;
+  if (NPC_GENERATOR_LOOKUP_CACHE.source === source) return;
+  NPC_GENERATOR_LOOKUP_CACHE.source = source;
+  NPC_GENERATOR_LOOKUP_CACHE.spellPackNamesKey = "";
+  NPC_GENERATOR_LOOKUP_CACHE.spellPackNames = null;
+  NPC_GENERATOR_LOOKUP_CACHE.classFeatureCandidatesByKey.clear();
+  NPC_GENERATOR_LOOKUP_CACHE.aiLookupIndexByKey.clear();
+}
+
 /**
  * Generate an NPC with all stats and traits
  * @param {Object} options - Generation options
@@ -639,53 +660,51 @@ async function resolveAiBlueprintItems(npc, options = {}) {
   let resolvedItems = 0;
   let missingItems = 0;
 
+  const tasks = [];
   for (const group of groups) {
     for (const rawEntry of group.names || []) {
       const itemRef = normalizeAiItemReference(rawEntry);
       if (!itemRef?.name) continue;
+      tasks.push({ group, itemRef });
+    }
+  }
 
-      const resolved = await resolveAiNamedItem(itemRef, group, budget);
-      if (!resolved?.item) {
-        missingItems += 1;
-        if (collectMatchDetails) {
-          matchDetails.push({
-            group: group.key || "items",
-            status: "missing",
-            requested: String(itemRef?.name || "").trim(),
-            lookup: String(itemRef?.lookup || "").trim(),
-            matchedName: "",
-            matchedType: "",
-            matchedPack: "",
-            strategy: ""
-          });
-        }
-        continue;
-      }
+  const taskResults = await mapWithConcurrencyPreserveOrder(
+    tasks,
+    AI_ITEM_RESOLVE_MAX_CONCURRENCY,
+    async ({ group, itemRef }) => ({
+      group,
+      itemRef,
+      resolved: await resolveAiNamedItem(itemRef, group, budget)
+    })
+  );
 
-      const item = resolved.item;
-      const dedupeName = String(item.name || "").trim().toLowerCase();
-      if (!dedupeName || addedNames.has(dedupeName)) {
-        if (collectMatchDetails) {
-          matchDetails.push({
-            group: group.key || "items",
-            status: "duplicate",
-            requested: String(itemRef?.name || "").trim(),
-            lookup: String(itemRef?.lookup || "").trim(),
-            matchedName: String(resolved?.meta?.matchedName || item?.name || "").trim(),
-            matchedType: String(resolved?.meta?.matchedType || item?.type || "").trim(),
-            matchedPack: String(resolved?.meta?.matchedPack || "").trim(),
-            strategy: String(resolved?.meta?.strategy || "").trim()
-          });
-        }
-        continue;
-      }
-      addedNames.add(dedupeName);
-      items.push(item);
-      resolvedItems += 1;
+  for (const task of taskResults) {
+    const { group, itemRef, resolved } = task || {};
+    if (!resolved?.item) {
+      missingItems += 1;
       if (collectMatchDetails) {
         matchDetails.push({
-          group: group.key || "items",
-          status: "resolved",
+          group: group?.key || "items",
+          status: "missing",
+          requested: String(itemRef?.name || "").trim(),
+          lookup: String(itemRef?.lookup || "").trim(),
+          matchedName: "",
+          matchedType: "",
+          matchedPack: "",
+          strategy: ""
+        });
+      }
+      continue;
+    }
+
+    const item = resolved.item;
+    const dedupeName = String(item.name || "").trim().toLowerCase();
+    if (!dedupeName || addedNames.has(dedupeName)) {
+      if (collectMatchDetails) {
+        matchDetails.push({
+          group: group?.key || "items",
+          status: "duplicate",
           requested: String(itemRef?.name || "").trim(),
           lookup: String(itemRef?.lookup || "").trim(),
           matchedName: String(resolved?.meta?.matchedName || item?.name || "").trim(),
@@ -694,10 +713,45 @@ async function resolveAiBlueprintItems(npc, options = {}) {
           strategy: String(resolved?.meta?.strategy || "").trim()
         });
       }
+      continue;
+    }
+    addedNames.add(dedupeName);
+    items.push(item);
+    resolvedItems += 1;
+    if (collectMatchDetails) {
+      matchDetails.push({
+        group: group?.key || "items",
+        status: "resolved",
+        requested: String(itemRef?.name || "").trim(),
+        lookup: String(itemRef?.lookup || "").trim(),
+        matchedName: String(resolved?.meta?.matchedName || item?.name || "").trim(),
+        matchedType: String(resolved?.meta?.matchedType || item?.type || "").trim(),
+        matchedPack: String(resolved?.meta?.matchedPack || "").trim(),
+        strategy: String(resolved?.meta?.strategy || "").trim()
+      });
     }
   }
 
   return { items, resolvedItems, missingItems, matchDetails };
+}
+
+async function mapWithConcurrencyPreserveOrder(items, concurrency, worker) {
+  const source = Array.isArray(items) ? items : [];
+  const limit = Math.max(1, Math.min(Number(concurrency) || 1, source.length));
+  if (!limit) return [];
+
+  const out = new Array(source.length);
+  let cursor = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= source.length) return;
+      out[index] = await worker(source[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return out;
 }
 
 async function resolveAiNamedItem(itemRef, group, budget) {
@@ -1036,41 +1090,159 @@ function buildLookupNameCandidates(names) {
   return Array.from(variants).sort((a, b) => b.length - a.length);
 }
 
-function pickBestCachedAiItemByKeywords(referenceNames, packs, allowedTypes, keywords, budget) {
+function normalizeLookupKey(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function buildLookupWords(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9]+/gi, " ")
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3);
+}
+
+function addDocToLookupBucket(map, key, doc) {
+  const bucketKey = normalizeLookupKey(key);
+  if (!bucketKey || !doc) return;
+  const bucket = map.get(bucketKey);
+  if (bucket) {
+    bucket.push(doc);
+    return;
+  }
+  map.set(bucketKey, [doc]);
+}
+
+function buildAiLookupCacheKey(packs, allowedTypes) {
+  const packKey = uniquePackNames(packs).slice().sort().join("|");
+  const typeKey = Array.from(new Set((allowedTypes || []).map((entry) => String(entry || "").toLowerCase()).filter(Boolean)))
+    .sort()
+    .join("|");
+  return `${packKey}::${typeKey}`;
+}
+
+function getAiLookupIndex(packs, allowedTypes) {
+  ensureNpcGeneratorLookupCacheState();
+  const cacheKey = buildAiLookupCacheKey(packs, allowedTypes);
+  if (NPC_GENERATOR_LOOKUP_CACHE.aiLookupIndexByKey.has(cacheKey)) {
+    return NPC_GENERATOR_LOOKUP_CACHE.aiLookupIndexByKey.get(cacheKey);
+  }
+
   const docs = getCachedDocsForPacks(packs);
-  if (!docs.length || !keywords.length) return null;
+  const allowed = new Set((allowedTypes || []).map((entry) => String(entry || "").toLowerCase()).filter(Boolean));
+  const tokenToDocs = new Map();
+  const wordToDocs = new Map();
+  const filteredDocs = [];
+
+  for (const doc of docs) {
+    const type = String(doc?.type || "").toLowerCase();
+    if (!allowed.has(type)) continue;
+    filteredDocs.push(doc);
+
+    const tokenSet = new Set(
+      getSearchStrings(doc)
+        .map((token) => normalizeLookupKey(token))
+        .filter(Boolean)
+    );
+    if (!tokenSet.size) continue;
+
+    const wordSet = new Set();
+    for (const token of tokenSet) {
+      addDocToLookupBucket(tokenToDocs, token, doc);
+      for (const word of buildLookupWords(token)) {
+        wordSet.add(word);
+      }
+    }
+    for (const word of wordSet) {
+      addDocToLookupBucket(wordToDocs, word, doc);
+    }
+  }
+
+  const index = { docs: filteredDocs, tokenToDocs, wordToDocs };
+  if (NPC_GENERATOR_LOOKUP_CACHE.aiLookupIndexByKey.size >= LOOKUP_CACHE_MAX_AI_INDEX_KEYS) {
+    NPC_GENERATOR_LOOKUP_CACHE.aiLookupIndexByKey.clear();
+  }
+  NPC_GENERATOR_LOOKUP_CACHE.aiLookupIndexByKey.set(cacheKey, index);
+  return index;
+}
+
+function collectAiLookupCandidates(index, terms, fallbackToAll = false) {
+  if (!index?.docs?.length) return [];
+  const out = new Set();
+  const list = Array.isArray(terms) ? terms : [terms];
+  for (const rawTerm of list) {
+    const normalizedTerm = normalizeLookupKey(rawTerm);
+    if (!normalizedTerm) continue;
+
+    const termVariants = getSearchStrings({ name: normalizedTerm })
+      .map((entry) => normalizeLookupKey(entry))
+      .filter(Boolean);
+    for (const variant of termVariants) {
+      for (const doc of index.tokenToDocs.get(variant) || []) out.add(doc);
+      for (const word of buildLookupWords(variant)) {
+        for (const doc of index.wordToDocs.get(word) || []) out.add(doc);
+      }
+    }
+  }
+
+  if (out.size) return Array.from(out);
+  return fallbackToAll ? index.docs.slice() : [];
+}
+
+function pickBestCachedAiItemByKeywords(referenceNames, packs, allowedTypes, keywords, budget) {
+  const lookupIndex = getAiLookupIndex(packs, allowedTypes);
+  if (!lookupIndex.docs.length || !keywords.length) return null;
 
   const names = (Array.isArray(referenceNames) ? referenceNames : [referenceNames])
     .map((value) => String(value || "").trim())
     .filter(Boolean);
-  const targetTokens = new Set(names.flatMap((name) => getSearchStrings({ name })));
+  const targetTokens = new Set(
+    names
+      .flatMap((name) => getSearchStrings({ name }))
+      .map((value) => normalizeLookupKey(value))
+      .filter(Boolean)
+  );
   const expandedKeywords = Array.from(
     new Set(
       keywords
         .flatMap((keyword) => getSearchStrings({ name: keyword }))
-        .map((value) => String(value || "").trim())
+        .map((value) => normalizeLookupKey(value))
         .filter(Boolean)
     )
   );
   if (!expandedKeywords.length) return null;
 
+  const docs = collectAiLookupCandidates(
+    lookupIndex,
+    [...expandedKeywords, ...Array.from(targetTokens)],
+    true
+  );
+  if (!docs.length) return null;
+
   const requiredMatches = expandedKeywords.length >= 2 ? 2 : 1;
+  const targetTokenList = Array.from(targetTokens);
   let best = null;
 
   for (const doc of docs) {
-    const type = String(doc?.type || "").toLowerCase();
-    if (!allowedTypes.includes(type)) continue;
-
-    const haystack = getSearchStrings(doc);
+    const haystack = getSearchStrings(doc)
+      .map((token) => normalizeLookupKey(token))
+      .filter(Boolean);
     if (!haystack.length) continue;
+    const haystackWordSet = buildSearchWordSet(haystack);
 
     let matchCount = 0;
     for (const keyword of expandedKeywords) {
-      if (haystack.some((token) => token.includes(keyword))) matchCount += 1;
+      if (haystack.some((token) => token.includes(keyword)) || haystackWordSet.has(keyword)) matchCount += 1;
     }
     if (matchCount < requiredMatches) continue;
 
-    const exactNameToken = haystack.some((token) => targetTokens.has(token));
+    const exactNameToken =
+      haystack.some((token) => targetTokens.has(token)) ||
+      targetTokenList.some((token) => haystackWordSet.has(token));
     const withinBudget = isWithinBudget(doc, budget, true);
     const score = (exactNameToken ? 100 : 0) + matchCount * 10 + (withinBudget ? 1 : 0);
     const tieBreaker = names.length
@@ -1091,13 +1263,29 @@ function pickBestCachedAiItemByKeywords(referenceNames, packs, allowedTypes, key
 }
 
 function pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget) {
-  const docs = getCachedDocsForPacks(packs);
-  if (!docs.length) return null;
+  const lookupIndex = getAiLookupIndex(packs, allowedTypes);
+  if (!lookupIndex.docs.length) return null;
 
-  const localizedSeeds = buildLookupNameCandidates(itemRef?.name || "");
-  const lookupSeeds = buildLookupNameCandidates(itemRef?.lookup || itemRef?.name || "");
+  const localizedSeeds = Array.from(
+    new Set(
+      buildLookupNameCandidates(itemRef?.name || "")
+        .flatMap((seed) => getSearchStrings({ name: seed }))
+        .map((seed) => normalizeLookupKey(seed))
+        .filter(Boolean)
+    )
+  );
+  const lookupSeeds = Array.from(
+    new Set(
+      buildLookupNameCandidates(itemRef?.lookup || itemRef?.name || "")
+        .flatMap((seed) => getSearchStrings({ name: seed }))
+        .map((seed) => normalizeLookupKey(seed))
+        .filter(Boolean)
+    )
+  );
   const combined = Array.from(new Set([...localizedSeeds, ...lookupSeeds]));
   if (!combined.length) return null;
+  const docs = collectAiLookupCandidates(lookupIndex, combined, true);
+  if (!docs.length) return null;
 
   const preferredScript =
     detectPreferredScriptByLanguage() ||
@@ -1105,10 +1293,9 @@ function pickPreferredCachedAiItemByNames(itemRef, packs, allowedTypes, budget) 
 
   let best = null;
   for (const doc of docs) {
-    const type = String(doc?.type || "").toLowerCase();
-    if (!allowedTypes.includes(type)) continue;
-
-    const haystack = getSearchStrings(doc);
+    const haystack = getSearchStrings(doc)
+      .map((token) => normalizeLookupKey(token))
+      .filter(Boolean);
     if (!haystack.length) continue;
     const haystackWordSet = buildSearchWordSet(haystack);
 
@@ -1917,8 +2104,18 @@ export async function getSpellCandidates(maxLevel, keywords) {
  * @returns {Promise<string[]>}
  */
 export async function getSpellPackNames() {
-  const preferred = new Set(getPacks("spells") || []);
-  const allItemPacks = collectAllItemPackNames();
+  ensureNpcGeneratorLookupCacheState();
+  const preferredSeed = getPacks("spells") || [];
+  const allItemPacks = Array.from(collectAllItemPackNames()).sort();
+  const cacheKey = `${preferredSeed.join("|")}::${allItemPacks.join("|")}`;
+  if (
+    NPC_GENERATOR_LOOKUP_CACHE.spellPackNames &&
+    NPC_GENERATOR_LOOKUP_CACHE.spellPackNamesKey === cacheKey
+  ) {
+    return NPC_GENERATOR_LOOKUP_CACHE.spellPackNames.slice();
+  }
+
+  const preferred = new Set(preferredSeed);
   for (const packName of allItemPacks) {
     if (preferred.has(packName)) continue;
     const pack = game.packs?.get(packName);
@@ -1932,7 +2129,10 @@ export async function getSpellPackNames() {
       // ignore
     }
   }
-  return Array.from(preferred);
+  const resolved = Array.from(preferred);
+  NPC_GENERATOR_LOOKUP_CACHE.spellPackNamesKey = cacheKey;
+  NPC_GENERATOR_LOOKUP_CACHE.spellPackNames = resolved;
+  return resolved.slice();
 }
 
 
@@ -2071,11 +2271,17 @@ export async function buildClassFeatureItems(npc) {
  * @returns {Promise<Array>}
  */
 export async function getClassFeatureCandidates(className) {
+  ensureNpcGeneratorLookupCacheState();
+  const packs = getPacks("classFeatures");
   const matches = [];
   const fallback = [];
   const needle = className.toLowerCase();
+  const cacheKey = `${packs.join("|")}|${needle}`;
+  if (NPC_GENERATOR_LOOKUP_CACHE.classFeatureCandidatesByKey.has(cacheKey)) {
+    return NPC_GENERATOR_LOOKUP_CACHE.classFeatureCandidatesByKey.get(cacheKey).slice();
+  }
 
-  for (const packName of getPacks("classFeatures")) {
+  for (const packName of packs) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
     const index = await getPackIndex(pack, ["type", "name", "system.requirements"]);
@@ -2091,7 +2297,12 @@ export async function getClassFeatureCandidates(className) {
     }
   }
 
-  return matches.length ? matches : fallback;
+  const result = matches.length ? matches : fallback;
+  if (NPC_GENERATOR_LOOKUP_CACHE.classFeatureCandidatesByKey.size >= LOOKUP_CACHE_MAX_CLASS_KEYS) {
+    NPC_GENERATOR_LOOKUP_CACHE.classFeatureCandidatesByKey.clear();
+  }
+  NPC_GENERATOR_LOOKUP_CACHE.classFeatureCandidatesByKey.set(cacheKey, result);
+  return result.slice();
 }
 
 // ========== Role Items (Equipment) ==========

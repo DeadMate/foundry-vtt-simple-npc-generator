@@ -4,6 +4,23 @@ import { registerOpenAiSettings } from "./openai.js";
 import { addNpcButton, showChangelogIfUpdated } from "./ui.js";
 
 let npcButtonObserver = null;
+let ensureButtonTimeout = null;
+let queuedEnsureContext = null;
+const ENSURE_BUTTON_DEBOUNCE_MS = 60;
+
+function scheduleEnsureNpcButton(contextHtml = null, options = {}) {
+  if (contextHtml) queuedEnsureContext = contextHtml;
+  if (ensureButtonTimeout !== null) return;
+
+  const immediate = options?.immediate === true;
+  const delay = immediate ? 0 : ENSURE_BUTTON_DEBOUNCE_MS;
+  ensureButtonTimeout = setTimeout(() => {
+    ensureButtonTimeout = null;
+    const context = queuedEnsureContext;
+    queuedEnsureContext = null;
+    ensureNpcButtonInActorsSidebar(context);
+  }, delay);
+}
 
 function ensureNpcButtonInActorsSidebar(contextHtml = null) {
   const resolveActorsRoots = (source) => {
@@ -78,16 +95,15 @@ Hooks.once("ready", () => {
     ui.notifications?.warn(t("main.warnWrongSystem"));
   }
   showChangelogIfUpdated();
-  ensureNpcButtonInActorsSidebar();
-  setTimeout(() => ensureNpcButtonInActorsSidebar(), 0);
-  setTimeout(() => ensureNpcButtonInActorsSidebar(), 250);
-  setTimeout(() => ensureNpcButtonInActorsSidebar(), 1000);
+  scheduleEnsureNpcButton(null, { immediate: true });
+  setTimeout(() => scheduleEnsureNpcButton(), 250);
+  setTimeout(() => scheduleEnsureNpcButton(), 1000);
 
   if (!npcButtonObserver) {
     const sidebar = document.querySelector("#sidebar");
     if (sidebar && typeof MutationObserver !== "undefined") {
       npcButtonObserver = new MutationObserver(() => {
-        ensureNpcButtonInActorsSidebar();
+        scheduleEnsureNpcButton();
       });
       npcButtonObserver.observe(sidebar, { childList: true, subtree: true });
     }
@@ -95,7 +111,7 @@ Hooks.once("ready", () => {
 });
 
 Hooks.on("renderActorDirectory", (app, html) => {
-  ensureNpcButtonInActorsSidebar(html);
+  scheduleEnsureNpcButton(html);
 });
 
 Hooks.on("renderDocumentDirectory", (app, html) => {
@@ -104,7 +120,7 @@ Hooks.on("renderDocumentDirectory", (app, html) => {
     app?.collection?.documentName === "Actor" ||
     app?.options?.id === "actors";
   if (!isActorDirectory) return;
-  ensureNpcButtonInActorsSidebar(html);
+  scheduleEnsureNpcButton(html);
 });
 
 Hooks.on("renderSidebarTab", (app, html) => {
@@ -113,15 +129,15 @@ Hooks.on("renderSidebarTab", (app, html) => {
     app?.tabName === "actors" ||
     app?.tab?.id === "actors";
   if (!isActorsTab) return;
-  ensureNpcButtonInActorsSidebar(html);
+  scheduleEnsureNpcButton(html);
 });
 
 Hooks.on("renderSidebar", (app, html) => {
-  ensureNpcButtonInActorsSidebar(html);
+  scheduleEnsureNpcButton(html);
 });
 
 Hooks.on("changeSidebarTab", (app, tab) => {
   const tabId = String(tab || "").trim().toLowerCase();
   if (tabId !== "actors") return;
-  setTimeout(() => ensureNpcButtonInActorsSidebar(), 0);
+  scheduleEnsureNpcButton(null, { immediate: true });
 });

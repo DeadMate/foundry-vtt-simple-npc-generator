@@ -35,6 +35,7 @@ const LOOKUP_ALIAS_GROUPS = [
 ];
 
 const LOOKUP_ALIAS_MAP = buildLookupAliasMap(LOOKUP_ALIAS_GROUPS);
+const SEARCH_STRINGS_CACHE = new WeakMap();
 
 /**
  * Pick a random element from an array
@@ -199,6 +200,11 @@ export function convertToCp(value, denom) {
  * @returns {string[]} Array of lowercase search strings
  */
 export function getSearchStrings(entry) {
+  const source = entry && typeof entry === "object" ? entry : {};
+  if (SEARCH_STRINGS_CACHE.has(source)) {
+    return SEARCH_STRINGS_CACHE.get(source);
+  }
+
   const out = new Set();
   const add = (value) => {
     if (!value) return;
@@ -212,11 +218,13 @@ export function getSearchStrings(entry) {
     }
   };
 
-  add(entry.name);
-  add(entry.originalName);
-  add(entry.flags?.babele?.originalName);
-  add(entry.system?.identifier);
-  return Array.from(out);
+  add(source.name);
+  add(source.originalName);
+  add(source.flags?.babele?.originalName);
+  add(source.system?.identifier);
+  const result = Object.freeze(Array.from(out));
+  SEARCH_STRINGS_CACHE.set(source, result);
+  return result;
 }
 
 /**

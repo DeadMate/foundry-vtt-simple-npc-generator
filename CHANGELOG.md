@@ -1,7 +1,12 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Faster creation for large NPC batches and imported JSON encounters.
+- Better item matching from compendiums for AI-generated/imported NPCs, with fewer misses.
+- New progress bars for long actions (planning, building, creating, and species application) so you can see generation status in real time.
+- Improved stability when creating many actors at once, including safer fallback handling if some entries fail.
+- Faster sidebar button behavior with reduced duplicate UI work during frequent render updates.
+- General performance tuning across species loading, item lookup, and generation pipelines.
 
 ## 0.9.3
 - Add new **Loot** generator tab with type/budget/tier filters, coin toggle, unique-only option, and ChatGPT prompt/import workflow.

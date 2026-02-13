@@ -471,23 +471,43 @@ export async function pickByBudgetAsync(pack, candidates, budget, allowMagic) {
   if (!Array.isArray(candidates) || !candidates.length) return null;
 
   const priced = [];
+  const pricedById = new Map();
   for (const entry of candidates) {
     const price = getPriceFromEntry(pack.collection, entry);
-    if (Number.isFinite(price)) priced.push({ c: entry, price });
+    if (!Number.isFinite(price)) continue;
+    priced.push({ c: entry, price });
+    const id = String(entry?._id || "");
+    if (id) pricedById.set(id, price);
   }
 
   if (!priced.length) {
     const sampled = await samplePricesFromDocuments(pack, candidates, 12);
     if (sampled.length) {
       const sorted = sampled.sort((a, b) => a.price - b.price);
-      return pickByBudget(sorted.map((s) => s.c), budget, allowMagic, (e) => sampled.find((s) => s.c === e)?.price);
+      const sampledById = new Map();
+      for (const record of sampled) {
+        const id = String(record?.c?._id || "");
+        if (!id || !Number.isFinite(record?.price)) continue;
+        sampledById.set(id, record.price);
+      }
+      return pickByBudget(
+        sorted.map((s) => s.c),
+        budget,
+        allowMagic,
+        (e) => sampledById.get(String(e?._id || "")) ?? null
+      );
     }
     return pickRandom(candidates);
   }
 
   const sorted = priced.sort((a, b) => a.price - b.price);
   const justEntries = sorted.map((p) => p.c);
-  return pickByBudget(justEntries, budget, allowMagic, (e) => priced.find((p) => p.c === e)?.price);
+  return pickByBudget(
+    justEntries,
+    budget,
+    allowMagic,
+    (e) => pricedById.get(String(e?._id || "")) ?? null
+  );
 }
 
 /**

@@ -5,7 +5,7 @@
 
 import { MODULE_ID } from "./constants.js";
 import { DATA_CACHE, loadData } from "./data-loader.js";
-import { buildCompendiumCache } from "./cache.js";
+import { buildCompendiumCache, getCachedDoc, getPackIndex } from "./cache.js";
 import { t, tf } from "./i18n.js";
 import { buildNpcDialogContent } from "./ui-dialog-template.js";
 import { capitalize, pickRandom, shuffleArray, escapeHtml, randInt, toItemData, getItemPriceValue } from "./utils.js";
@@ -29,7 +29,6 @@ import {
   getPacks,
   cloneItemData,
   isAllowedItemDoc,
-  isWithinBudget,
   getBudgetRange
 } from "./items.js";
 import {
@@ -79,6 +78,196 @@ const LOOT_TYPE_WEIGHTS = [
 ];
 const SHOPKEEPER_ICON_PATH = `modules/${MODULE_ID}/assets/icons/shopkeeper.svg`;
 const LOOT_CONTAINER_ICON_PATH = `modules/${MODULE_ID}/assets/icons/loot-bag.svg`;
+const SHOP_RUNTIME_INDEX_FIELDS = [
+  "type",
+  "name",
+  "system.rarity",
+  "system.properties",
+  "system.price",
+  "system.identifier",
+  "system.armor.type",
+  "system.type.value",
+  "system.consumableType",
+  "system.consumableType.value",
+  "flags.core.sourceId",
+  "flags.dnd5e.sourceId"
+];
+const SHOP_RUNTIME_CACHE = {
+  source: null,
+  docsByPacksKey: new Map(),
+  shopPoolsByKey: new Map(),
+  lootPoolsByKey: new Map(),
+  hydratedDocByKey: new Map()
+};
+const SHOP_ALLOWED_TYPES = new Set(["weapon", "equipment", "loot", "consumable", "tool", "spell"]);
+const SHOP_GENERAL_FALLBACK_TYPES = new Set(["equipment", "loot", "tool", "consumable"]);
+const LOOT_GEAR_TYPES = new Set(["equipment", "loot", "tool"]);
+const UI_PROGRESS_UPDATE_MIN_MS = 80;
+const UI_PROGRESS_UPDATE_MIN_STEP = 2;
+const UI_BUILD_MAX_CONCURRENCY = 4;
+const UI_ACTOR_CREATE_BATCH_SIZE = 25;
+
+function displayProgressBarSafe(label, pct) {
+  const text = String(label || "").trim();
+  const clampedPct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  try {
+    if (typeof SceneNavigation?.displayProgressBar === "function") {
+      SceneNavigation.displayProgressBar({ label: text, pct: clampedPct });
+      return;
+    }
+  } catch {
+    // fall through to notifications
+  }
+  if (clampedPct >= 100) {
+    ui.notifications?.info(text);
+  }
+}
+
+function createProgressReporter({ label, total = 0, minIntervalMs = UI_PROGRESS_UPDATE_MIN_MS, minPercentStep = UI_PROGRESS_UPDATE_MIN_STEP } = {}) {
+  const target = Math.max(0, Number(total) || 0);
+  const text = String(label || "").trim();
+  if (!text || !target) {
+    return {
+      tick: () => {},
+      set: () => {},
+      finish: () => {}
+    };
+  }
+
+  let value = 0;
+  let lastPct = -1;
+  let lastAt = 0;
+
+  const emit = (force = false) => {
+    const now = Date.now();
+    const pct = Math.max(0, Math.min(100, Math.round((value / target) * 100)));
+    const pctDelta = Math.abs(pct - lastPct);
+    const timeDelta = now - lastAt;
+    if (!force && pct === lastPct) return;
+    if (!force && pct < 100 && pctDelta < minPercentStep && timeDelta < minIntervalMs) return;
+    lastPct = pct;
+    lastAt = now;
+    displayProgressBarSafe(text, pct);
+  };
+
+  emit(true);
+  return {
+    tick(step = 1) {
+      value = Math.min(target, value + Math.max(0, Number(step) || 0));
+      emit(false);
+    },
+    set(nextValue) {
+      value = Math.min(target, Math.max(0, Number(nextValue) || 0));
+      emit(false);
+    },
+    finish() {
+      value = target;
+      emit(true);
+    }
+  };
+}
+
+async function mapWithConcurrencyPreserveOrder(items, concurrency, worker, onSettled) {
+  const source = Array.isArray(items) ? items : [];
+  if (!source.length) return [];
+  const limit = Math.max(1, Math.min(source.length, Number(concurrency) || 1));
+  const out = new Array(source.length);
+  let cursor = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= source.length) return;
+      try {
+        out[index] = await worker(source[index], index);
+      } finally {
+        if (typeof onSettled === "function") onSettled(index);
+      }
+    }
+  });
+  await Promise.all(runners);
+  return out;
+}
+
+function isActorDataPayload(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function getActorCreateBatchSize(total) {
+  const count = Math.max(1, Number(total) || 1);
+  return Math.max(1, Math.min(UI_ACTOR_CREATE_BATCH_SIZE, count));
+}
+
+async function createActorsInBatches(actorDataList, { chunkSize = UI_ACTOR_CREATE_BATCH_SIZE, onProgress } = {}) {
+  const list = Array.isArray(actorDataList) ? actorDataList : [];
+  const indexed = [];
+  for (let index = 0; index < list.length; index++) {
+    if (!isActorDataPayload(list[index])) continue;
+    indexed.push({ index, actorData: list[index] });
+  }
+
+  const out = new Array(list.length).fill(null);
+  if (!indexed.length) {
+    return {
+      created: out,
+      createdCount: 0,
+      totalValid: 0,
+      skippedCount: list.length
+    };
+  }
+
+  const batchSize = Math.max(1, Math.min(50, Number(chunkSize) || UI_ACTOR_CREATE_BATCH_SIZE));
+  let createdCount = 0;
+  for (let start = 0; start < indexed.length; start += batchSize) {
+    const chunk = indexed.slice(start, start + batchSize);
+    const payload = chunk.map((entry) => entry.actorData);
+    let createdChunk = [];
+
+    if (typeof Actor.createDocuments === "function") {
+      try {
+        createdChunk = await Actor.createDocuments(payload);
+      } catch (err) {
+        console.warn("NPC Button: Batch Actor.createDocuments failed, falling back to per-actor create.", err);
+        createdChunk = await Promise.all(
+          payload.map(async (actorData) => {
+            try {
+              return await Actor.create(actorData);
+            } catch (createErr) {
+              console.warn("NPC Button: Actor.create failed for one entry.", createErr);
+              return null;
+            }
+          })
+        );
+      }
+    } else {
+      createdChunk = await Promise.all(
+        payload.map(async (actorData) => {
+          try {
+            return await Actor.create(actorData);
+          } catch (err) {
+            console.warn("NPC Button: Actor.create failed for one entry.", err);
+            return null;
+          }
+        })
+      );
+    }
+
+    for (let index = 0; index < chunk.length; index++) {
+      out[chunk[index].index] = createdChunk?.[index] || null;
+    }
+    createdCount += createdChunk.filter(Boolean).length;
+    if (typeof onProgress === "function") {
+      onProgress(Math.min(createdCount, indexed.length), indexed.length);
+    }
+  }
+
+  return {
+    created: out,
+    createdCount,
+    totalValid: indexed.length,
+    skippedCount: Math.max(0, list.length - indexed.length)
+  };
+}
 
 /**
  * Get actor folder options as HTML
@@ -297,35 +486,44 @@ export async function loadChangelogNotes(version) {
 export function addNpcButton(html) {
   const $html = html?.jquery ? html : $(html);
   if (!$html?.length || typeof $html.find !== "function") return;
-  $html
-    .find(`.npc-btn-header-actions [data-${MODULE_ID}='create']`)
-    .filter((_, el) => $(el).closest(".directory-header").length === 0)
-    .remove();
-  $html
-    .find(`.npc-btn-header-actions[data-${MODULE_ID}='actions']`)
-    .filter((_, el) => $(el).closest(".directory-header").length === 0)
-    .remove();
-  const selectors = [
-    ".directory-header .header-actions",
-    ".directory-header .action-buttons",
-    ".directory-header .controls",
-    ".directory-header .action-buttons.flexrow",
-    ".directory-header .action-buttons .actions",
-    ".directory-header",
-    ".header-actions"
-  ];
+  const root = $html[0];
+  if (!root || typeof root.querySelector !== "function") return;
 
-  let headerActions = null;
-  for (const selector of selectors) {
-    const found = $html.find(selector).first();
-    if (found.length) {
-      headerActions = found;
-      break;
-    }
+  const readyAttr = `data-${MODULE_ID}-button-ready`;
+  const existingInHeader = root.querySelector(`.directory-header [data-${MODULE_ID}='create']`);
+  if (existingInHeader) {
+    root.setAttribute(readyAttr, "1");
+    return;
+  }
+  if (root.getAttribute(readyAttr) === "1") {
+    root.removeAttribute(readyAttr);
   }
 
-  const existing = $html.find(`.directory-header [data-${MODULE_ID}='create'], [data-${MODULE_ID}='create'].npc-btn-sidebar-button`);
-  if (existing.length) return;
+  const orphanActionContainers = root.querySelectorAll(`.npc-btn-header-actions[data-${MODULE_ID}='actions']`);
+  for (const container of orphanActionContainers) {
+    if (container.closest(".directory-header")) continue;
+    container.remove();
+  }
+  const orphanCreateButtons = root.querySelectorAll(`.npc-btn-header-actions [data-${MODULE_ID}='create']`);
+  for (const buttonNode of orphanCreateButtons) {
+    if (buttonNode.closest(".directory-header")) continue;
+    buttonNode.remove();
+  }
+
+  const directoryHeaderNode = root.querySelector(".directory-header");
+  if (!directoryHeaderNode) return;
+  if (directoryHeaderNode.querySelector(`[data-${MODULE_ID}='create']`)) {
+    root.setAttribute(readyAttr, "1");
+    return;
+  }
+  const directoryHeader = $(directoryHeaderNode);
+
+  const headerActionsNode =
+    directoryHeaderNode.querySelector(".header-actions") ||
+    directoryHeaderNode.querySelector(".action-buttons") ||
+    directoryHeaderNode.querySelector(".controls") ||
+    directoryHeaderNode.querySelector(".action-buttons .actions");
+  let headerActions = headerActionsNode ? $(headerActionsNode) : null;
 
   const button = $(
     `<button type="button" class="npc-btn-sidebar-button" data-${MODULE_ID}="create">
@@ -338,19 +536,21 @@ export function addNpcButton(html) {
 
   if (headerActions) {
     headerActions.append(button);
+    root.setAttribute(readyAttr, "1");
     return;
   }
 
-  const createButton = $html.find(
-    ".directory-header button[data-action='create'], .directory-header button.create-entity"
-  ).first();
+  const createButtonNode = directoryHeaderNode.querySelector(
+    "button[data-action='create'], button.create-entity"
+  );
+  const createButton = createButtonNode ? $(createButtonNode) : $();
 
   if (createButton.length) {
     createButton.after(button);
+    root.setAttribute(readyAttr, "1");
     return;
   }
 
-  const directoryHeader = $html.find(".directory-header").first();
   if (directoryHeader.length) {
     let fallbackActions = directoryHeader.find(`.npc-btn-header-actions[data-${MODULE_ID}='actions']`).first();
     if (!fallbackActions.length) {
@@ -360,6 +560,7 @@ export function addNpcButton(html) {
       directoryHeader.append(fallbackActions);
     }
     fallbackActions.append(button);
+    root.setAttribute(readyAttr, "1");
     return;
   }
 }
@@ -1026,71 +1227,51 @@ export async function createNpcFromForm(formData, options = {}) {
     let aiFullFailed = 0;
     let aiFullSkipped = 0;
     let archetypePool = shuffleArray(DATA_CACHE.archetypes);
+    const planningProgress = createProgressReporter({
+      label: i18nText("ui.progress.npcPlanning", "NPC: planning generation"),
+      total: countInput
+    });
     for (let i = 0; i < countInput; i++) {
-      const encounterPool =
-        encounterMode === "encounter" && encounterArchetypeKey !== "random"
-          ? DATA_CACHE.archetypes.filter((a) => a.id === encounterArchetypeKey)
-          : null;
-      const useRandomArchetype = encounterMode === "encounter"
-        ? encounterArchetypeKey === "random"
-        : archetypeInput === "random";
-      if (encounterMode === "encounter" && encounterPool && encounterPool.length) {
-        if (!archetypePool.length || archetypePool.some((a) => !encounterPool.includes(a))) {
-          archetypePool = shuffleArray(encounterPool);
-        }
-      }
-      if (useRandomArchetype && !archetypePool.length) {
-        archetypePool = shuffleArray(encounterPool && encounterPool.length ? encounterPool : DATA_CACHE.archetypes);
-      }
-      const archetype = useRandomArchetype
-        ? archetypePool.shift()
-        : encounterMode === "encounter"
-          ? (encounterPool?.[0] || DATA_CACHE.archetypes.find((a) => a.id === encounterArchetypeKey))
-          : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
-      const resolvedArchetype = archetype || DATA_CACHE.archetypes[0];
-
-      const culture =
-        cultureInput === "random"
-          ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
-          : cultureInput;
-      const gender = genderInput === "random" ? pickRandom(["male", "female"]) : genderInput;
-
-      const speciesEntry =
-        (encounterMode === "encounter" ? fixedEncounterSpecies : fixedSpecies) ||
-        (speciesList.length ? pickRandom(speciesList) : null);
-      const hasFixedSpecies = encounterMode === "encounter" ? !!fixedEncounterSpecies : !!fixedSpecies;
-      const speciesName = speciesEntry?.name || "Unknown";
-
-      const plannedTier = encounterPlan?.[i]?.tier ?? tier;
-      const importantNpc = encounterPlan?.[i]?.importantNpc ?? manualImportant;
-      const localGenerated = generateNpc({
-        tier: plannedTier,
-        archetype: resolvedArchetype,
-        culture,
-        gender,
-        race: speciesName,
-        budget: budgetInput,
-        includeLoot,
-        includeSecret,
-        includeHook,
-        importantNpc,
-        usedNames
-      });
-
-      if (!useAiFull) {
-        planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
-        continue;
-      }
-
-      if (i >= aiFullMaxBatch) {
-        aiFullSkipped += 1;
-        planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
-        continue;
-      }
-
       try {
-        const aiGenerated = await generateFullNpcWithOpenAi({
+        const encounterPool =
+          encounterMode === "encounter" && encounterArchetypeKey !== "random"
+            ? DATA_CACHE.archetypes.filter((a) => a.id === encounterArchetypeKey)
+            : null;
+        const useRandomArchetype = encounterMode === "encounter"
+          ? encounterArchetypeKey === "random"
+          : archetypeInput === "random";
+        if (encounterMode === "encounter" && encounterPool && encounterPool.length) {
+          if (!archetypePool.length || archetypePool.some((a) => !encounterPool.includes(a))) {
+            archetypePool = shuffleArray(encounterPool);
+          }
+        }
+        if (useRandomArchetype && !archetypePool.length) {
+          archetypePool = shuffleArray(encounterPool && encounterPool.length ? encounterPool : DATA_CACHE.archetypes);
+        }
+        const archetype = useRandomArchetype
+          ? archetypePool.shift()
+          : encounterMode === "encounter"
+            ? (encounterPool?.[0] || DATA_CACHE.archetypes.find((a) => a.id === encounterArchetypeKey))
+            : DATA_CACHE.archetypes.find((a) => a.id === archetypeInput);
+        const resolvedArchetype = archetype || DATA_CACHE.archetypes[0];
+
+        const culture =
+          cultureInput === "random"
+            ? pickRandom(Object.keys(DATA_CACHE.names.cultures))
+            : cultureInput;
+        const gender = genderInput === "random" ? pickRandom(["male", "female"]) : genderInput;
+
+        const speciesEntry =
+          (encounterMode === "encounter" ? fixedEncounterSpecies : fixedSpecies) ||
+          (speciesList.length ? pickRandom(speciesList) : null);
+        const hasFixedSpecies = encounterMode === "encounter" ? !!fixedEncounterSpecies : !!fixedSpecies;
+        const speciesName = speciesEntry?.name || "Unknown";
+
+        const plannedTier = encounterPlan?.[i]?.tier ?? tier;
+        const importantNpc = encounterPlan?.[i]?.importantNpc ?? manualImportant;
+        const localGenerated = generateNpc({
           tier: plannedTier,
+          archetype: resolvedArchetype,
           culture,
           gender,
           race: speciesName,
@@ -1099,40 +1280,69 @@ export async function createNpcFromForm(formData, options = {}) {
           includeSecret,
           includeHook,
           importantNpc,
-          encounterDifficulty,
-          archetypeName: resolvedArchetype?.name || "",
-          attackStyle: resolvedArchetype?.attackStyle || "",
-          archetypeTags: Array.isArray(resolvedArchetype?.tags) ? resolvedArchetype.tags : [],
-          allowedSkillIds: Object.keys(CONFIG?.DND5E?.skills || {})
+          usedNames
         });
 
-        if (!aiGenerated || typeof aiGenerated !== "object") {
-          aiFullFailed += 1;
+        if (!useAiFull) {
           planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
           continue;
         }
 
-        aiGenerated.includeLoot = includeLoot;
-        aiGenerated.includeSecret = includeSecret;
-        aiGenerated.includeHook = includeHook;
-        aiGenerated.importantNpc = importantNpc;
-        aiGenerated.budget = aiGenerated.budget || budgetInput;
-        aiGenerated.tier = Number(aiGenerated.tier || plannedTier) || plannedTier;
-
-        const aiSpeciesEntry = findSpeciesEntryByRace(speciesList, aiGenerated.race);
-        const finalSpeciesEntry = aiSpeciesEntry || (hasFixedSpecies ? speciesEntry : null);
-        if (!aiGenerated.race && finalSpeciesEntry?.name) {
-          aiGenerated.race = finalSpeciesEntry.name;
+        if (i >= aiFullMaxBatch) {
+          aiFullSkipped += 1;
+          planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+          continue;
         }
 
-        aiFullApplied += 1;
-        planned.push({ generated: aiGenerated, speciesEntry: finalSpeciesEntry, generationMode: "ai-full" });
-      } catch (err) {
-        aiFullFailed += 1;
-        console.warn(`NPC Button: OpenAI full NPC generation failed for slot ${i + 1}.`, err);
-        planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+        try {
+          const aiGenerated = await generateFullNpcWithOpenAi({
+            tier: plannedTier,
+            culture,
+            gender,
+            race: speciesName,
+            budget: budgetInput,
+            includeLoot,
+            includeSecret,
+            includeHook,
+            importantNpc,
+            encounterDifficulty,
+            archetypeName: resolvedArchetype?.name || "",
+            attackStyle: resolvedArchetype?.attackStyle || "",
+            archetypeTags: Array.isArray(resolvedArchetype?.tags) ? resolvedArchetype.tags : [],
+            allowedSkillIds: Object.keys(CONFIG?.DND5E?.skills || {})
+          });
+
+          if (!aiGenerated || typeof aiGenerated !== "object") {
+            aiFullFailed += 1;
+            planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+            continue;
+          }
+
+          aiGenerated.includeLoot = includeLoot;
+          aiGenerated.includeSecret = includeSecret;
+          aiGenerated.includeHook = includeHook;
+          aiGenerated.importantNpc = importantNpc;
+          aiGenerated.budget = aiGenerated.budget || budgetInput;
+          aiGenerated.tier = Number(aiGenerated.tier || plannedTier) || plannedTier;
+
+          const aiSpeciesEntry = findSpeciesEntryByRace(speciesList, aiGenerated.race);
+          const finalSpeciesEntry = aiSpeciesEntry || (hasFixedSpecies ? speciesEntry : null);
+          if (!aiGenerated.race && finalSpeciesEntry?.name) {
+            aiGenerated.race = finalSpeciesEntry.name;
+          }
+
+          aiFullApplied += 1;
+          planned.push({ generated: aiGenerated, speciesEntry: finalSpeciesEntry, generationMode: "ai-full" });
+        } catch (err) {
+          aiFullFailed += 1;
+          console.warn(`NPC Button: OpenAI full NPC generation failed for slot ${i + 1}.`, err);
+          planned.push({ generated: localGenerated, speciesEntry, generationMode: "local" });
+        }
+      } finally {
+        planningProgress.tick();
       }
     }
+    planningProgress.finish();
 
     if (useAiFull) {
       if (aiFullApplied) {
@@ -1196,8 +1406,14 @@ export async function createNpcFromForm(formData, options = {}) {
       }
     }
 
-    const buildResults = await Promise.all(
-      planned.map(async (entry) => {
+    const buildProgress = createProgressReporter({
+      label: i18nText("ui.progress.npcBuilding", "NPC: building actor data"),
+      total: planned.length
+    });
+    const buildResults = await mapWithConcurrencyPreserveOrder(
+      planned,
+      UI_BUILD_MAX_CONCURRENCY,
+      async (entry) => {
         if (entry.generationMode === "ai-full") {
           const result = await buildActorDataFromAiBlueprint(entry.generated, folderId);
           return {
@@ -1211,8 +1427,10 @@ export async function createNpcFromForm(formData, options = {}) {
           resolvedItems: 0,
           missingItems: 0
         };
-      })
+      },
+      () => buildProgress.tick()
     );
+    buildProgress.finish();
     const actorDataList = buildResults.map((entry) => entry.actorData);
     const resolvedAiItems = buildResults.reduce((sum, entry) => sum + Number(entry.resolvedItems || 0), 0);
     const missingAiItems = buildResults.reduce((sum, entry) => sum + Number(entry.missingItems || 0), 0);
@@ -1225,20 +1443,56 @@ export async function createNpcFromForm(formData, options = {}) {
       );
     }
 
-    const created =
-      typeof Actor.createDocuments === "function"
-        ? await Actor.createDocuments(actorDataList)
-        : await Promise.all(actorDataList.map((data) => Actor.create(data)));
+    const createProgress = createProgressReporter({
+      label: i18nText("ui.progress.npcCreating", "NPC: creating actors"),
+      total: actorDataList.filter((entry) => isActorDataPayload(entry)).length
+    });
+    const {
+      created,
+      createdCount,
+      skippedCount
+    } = await createActorsInBatches(actorDataList, {
+      chunkSize: getActorCreateBatchSize(actorDataList.length),
+      onProgress: (done) => createProgress.set(done)
+    });
+    createProgress.finish();
+    if (skippedCount) {
+      ui.notifications?.warn(
+        i18nFormat(
+          "ui.warnSkippedInvalidActorData",
+          { count: skippedCount },
+          `Skipped ${skippedCount} invalid NPC entries before actor creation.`
+        )
+      );
+    }
+    const createdActors = (created || []).filter(Boolean);
+    if (!createdActors.length) {
+      ui.notifications?.warn(i18nText("ui.warnNoActorsCreated", "No NPC actors were created."));
+      return;
+    }
+    const failedCreateCount = Math.max(0, actorDataList.length - skippedCount - createdCount);
+    if (failedCreateCount > 0) {
+      ui.notifications?.warn(
+        i18nFormat(
+          "ui.warnCreateNpcPartial",
+          { count: failedCreateCount },
+          `Failed to create ${failedCreateCount} NPC(s).`
+        )
+      );
+    }
 
     // Zip planned data with created actors for safer iteration
     const zipped = planned.map((plan, idx) => ({
       actor: created[idx],
       speciesEntry: plan.speciesEntry
     }));
+    const speciesTargets = zipped.filter((entry) => entry.actor && entry.speciesEntry);
+    const speciesProgress = createProgressReporter({
+      label: i18nText("ui.progress.npcSpecies", "NPC: applying species data"),
+      total: speciesTargets.length
+    });
     let speciesApplyErrors = 0;
-
-    for (const { actor, speciesEntry } of zipped) {
-      if (!actor || !speciesEntry) continue;
+    for (const { actor, speciesEntry } of speciesTargets) {
       try {
         const speciesItem = await buildSpeciesItem(speciesEntry);
         if (!speciesItem) continue;
@@ -1251,22 +1505,25 @@ export async function createNpcFromForm(formData, options = {}) {
       } catch (err) {
         speciesApplyErrors += 1;
         console.warn(`NPC Button: Failed to apply species data for actor "${actor?.name || "Unknown"}".`, err);
+      } finally {
+        speciesProgress.tick();
       }
     }
+    speciesProgress.finish();
     if (speciesApplyErrors) {
       ui.notifications?.warn(
         i18nFormat("ui.warnSpeciesApplyPartial", { count: speciesApplyErrors })
       );
     }
 
-    if (created.length === 1) {
-      ui.notifications?.info(i18nFormat("ui.infoCreatedSingle", { name: created[0]?.name || i18nText("common.unnamed") }));
+    if (createdActors.length === 1) {
+      ui.notifications?.info(i18nFormat("ui.infoCreatedSingle", { name: createdActors[0]?.name || i18nText("common.unnamed") }));
       return;
     }
-    const names = created.map((a) => a?.name).filter(Boolean);
+    const names = createdActors.map((a) => a?.name).filter(Boolean);
     const preview = names.slice(0, 5).join(", ");
     const extra = names.length > 5 ? i18nFormat("ui.moreSuffix", { count: names.length - 5 }) : "";
-    ui.notifications?.info(i18nFormat("ui.infoCreatedMany", { count: created.length, preview, extra }));
+    ui.notifications?.info(i18nFormat("ui.infoCreatedMany", { count: createdActors.length, preview, extra }));
   } catch (err) {
     console.error("NPC Button: Failed to create NPC(s).", err);
     ui.notifications?.error(i18nText("ui.errorCreateNpcFailed"));
@@ -1434,9 +1691,7 @@ async function buildLootInventory({ lootType, itemCount, budget, allowMagic, uni
     ...getPacks("loot"),
     ...getPacks("spells")
   ]);
-  let docs = getCachedItemDocsFromPacks(packs);
-  if (!docs.length) docs = await collectItemDocsFromPacks(packs);
-  const pools = buildLootPoolsFromCache(docs, allowMagic);
+  const pools = await getLootPoolsForPacks(packs, allowMagic);
   if (!pools.mixed.length) return [];
 
   const result = [];
@@ -1453,7 +1708,7 @@ async function buildLootInventory({ lootType, itemCount, budget, allowMagic, uni
       pickLootDocFromPool(pools.mixed, seen, budget, allowMagic, uniqueOnly);
     attempts += 1;
     if (!doc) continue;
-    const item = toLootItemData(doc, plannedCategory);
+    const item = await toLootItemData(doc, plannedCategory);
     if (!item?.name) continue;
     const key = normalizeShopSearchKey(item.name);
     if (uniqueOnly && (!key || seen.has(key))) continue;
@@ -1492,9 +1747,7 @@ async function buildLootInventoryFromImport({
     ...getPacks("loot"),
     ...getPacks("spells")
   ]);
-  let docs = getCachedItemDocsFromPacks(packs);
-  if (!docs.length) docs = await collectItemDocsFromPacks(packs);
-  const pools = buildLootPoolsFromCache(docs, allowMagic);
+  const pools = await getLootPoolsForPacks(packs, allowMagic);
   if (!pools.mixed.length) return { items: [], resolved: 0, missing: refs.length };
 
   const result = [];
@@ -1509,7 +1762,7 @@ async function buildLootInventoryFromImport({
       continue;
     }
     const category = inferLootCategoryFromDoc(doc, type);
-    const item = toLootItemData(doc, category);
+    const item = await toLootItemData(doc, category);
     if (!item?.name) {
       missing += 1;
       continue;
@@ -1533,11 +1786,7 @@ async function buildShopInventory({ shopType, itemCount, budget, allowMagic }) {
     ...getPacks("loot"),
     ...getPacks("spells")
   ]);
-  let docs = getCachedItemDocsFromPacks(packs);
-  if (!docs.length) {
-    docs = await collectItemDocsFromPacks(packs);
-  }
-  const pools = buildShopPoolsFromCache(docs, allowMagic);
+  const pools = await getShopPoolsForPacks(packs, allowMagic);
   if (!pools.market.length) return [];
   const result = [];
   const seen = new Set();
@@ -1553,7 +1802,7 @@ async function buildShopInventory({ shopType, itemCount, budget, allowMagic }) {
       pickShopDocFromPool(pools.market, seen, budget, allowMagic);
     attempts += 1;
     if (!doc) continue;
-    const item = toShopItemData(doc, plannedCategory, budget, allowMagic);
+    const item = await toShopItemData(doc, plannedCategory, budget, allowMagic);
     if (!item?.name) continue;
     const key = String(item.name || "").trim().toLowerCase();
     if (!key || seen.has(key)) continue;
@@ -1576,9 +1825,7 @@ async function buildShopInventoryFromImport({ importPayload, shopType, budget, a
     ...getPacks("loot"),
     ...getPacks("spells")
   ]);
-  let docs = getCachedItemDocsFromPacks(packs);
-  if (!docs.length) docs = await collectItemDocsFromPacks(packs);
-  const pools = buildShopPoolsFromCache(docs, allowMagic);
+  const pools = await getShopPoolsForPacks(packs, allowMagic);
   if (!pools.market.length) return { items: [], resolved: 0, missing: refs.length };
 
   const result = [];
@@ -1594,7 +1841,7 @@ async function buildShopInventoryFromImport({ importPayload, shopType, budget, a
       continue;
     }
     const category = inferShopCategoryFromDoc(doc, type);
-    const item = toShopItemData(doc, category, budget, allowMagic);
+    const item = await toShopItemData(doc, category, budget, allowMagic);
     if (!item?.name) {
       missing += 1;
       continue;
@@ -1759,81 +2006,121 @@ function normalizeImportedItemPriceGp(ref) {
 
 function buildShopPoolsFromCache(docs, allowMagic) {
   const list = Array.isArray(docs) ? docs.filter(Boolean) : [];
-  const withType = list.filter((doc) => {
-    const type = String(doc?.type || "").toLowerCase();
-    if (!["weapon", "equipment", "loot", "consumable", "tool", "spell"].includes(type)) return false;
-    if (!allowMagic && type === "spell") return false;
-    return isAllowedItemDoc(doc, allowMagic);
-  });
   const out = {
-    market: withType,
-    general: withType.filter((doc) => isGeneralShopDoc(doc)),
-    alchemy: withType.filter((doc) => isAlchemyShopDoc(doc)),
-    scrolls: withType.filter((doc) => isScrollShopDoc(doc)),
-    weapons: withType.filter((doc) => String(doc?.type || "").toLowerCase() === "weapon"),
-    armor: withType.filter((doc) => isArmorShopDoc(doc)),
-    food: withType.filter((doc) => isFoodShopDoc(doc))
+    market: [],
+    general: [],
+    alchemy: [],
+    scrolls: [],
+    weapons: [],
+    armor: [],
+    food: []
+  };
+  const fallback = {
+    general: [],
+    alchemy: [],
+    scrolls: [],
+    food: []
   };
 
+  for (const doc of list) {
+    const type = String(doc?.type || "").toLowerCase();
+    if (!SHOP_ALLOWED_TYPES.has(type)) continue;
+    if (!allowMagic && type === "spell") continue;
+    if (!isAllowedItemDoc(doc, allowMagic)) continue;
+
+    out.market.push(doc);
+
+    const isWeapon = type === "weapon";
+    const isArmor = isArmorShopDoc(doc);
+    const isScroll = isScrollShopDoc(doc);
+    const isAlchemy = isAlchemyShopDoc(doc);
+    const isFood = isFoodShopDoc(doc);
+
+    if (isWeapon) out.weapons.push(doc);
+    if (isArmor) out.armor.push(doc);
+    if (isAlchemy) out.alchemy.push(doc);
+    if (isScroll) out.scrolls.push(doc);
+    if (isFood) out.food.push(doc);
+
+    if (SHOP_GENERAL_FALLBACK_TYPES.has(type)) {
+      fallback.general.push(doc);
+      if (type === "consumable") {
+        fallback.alchemy.push(doc);
+        fallback.scrolls.push(doc);
+      }
+    }
+    if (type === "spell") {
+      fallback.scrolls.push(doc);
+    }
+    if (type === "consumable" && !isScroll) {
+      fallback.food.push(doc);
+    }
+
+    const isGeneralByRule = !isWeapon && SHOP_GENERAL_FALLBACK_TYPES.has(type) &&
+      !isFood && !isArmor && !isScroll && !isAlchemy;
+    if (isGeneralByRule) out.general.push(doc);
+  }
+
   if (!out.general.length) {
-    out.general = withType.filter((doc) => {
-      const type = String(doc?.type || "").toLowerCase();
-      return ["equipment", "loot", "tool", "consumable"].includes(type);
-    });
+    out.general = fallback.general.slice();
   }
   if (!out.alchemy.length) {
-    out.alchemy = withType.filter((doc) => String(doc?.type || "").toLowerCase() === "consumable");
+    out.alchemy = fallback.alchemy.slice();
   }
   if (!out.scrolls.length) {
-    out.scrolls = withType.filter((doc) => {
-      const docType = String(doc?.type || "").toLowerCase();
-      return docType === "spell" || docType === "consumable";
-    });
+    out.scrolls = fallback.scrolls.slice();
   }
   if (!out.food.length) {
-    out.food = withType.filter((doc) => {
-      const docType = String(doc?.type || "").toLowerCase();
-      return docType === "consumable" && !isScrollShopDoc(doc);
-    });
+    out.food = fallback.food.slice();
   }
-  if (!out.market.length) out.market = withType;
   return out;
 }
 
 function buildLootPoolsFromCache(docs, allowMagic) {
   const list = Array.isArray(docs) ? docs.filter(Boolean) : [];
-  const withType = list.filter((doc) => {
-    const type = String(doc?.type || "").toLowerCase();
-    if (!["weapon", "equipment", "loot", "consumable", "tool", "spell"].includes(type)) return false;
-    if (!allowMagic && type === "spell") return false;
-    return isAllowedItemDoc(doc, allowMagic);
-  });
-
   const out = {
-    mixed: withType,
-    gear: withType.filter((doc) => {
-      const type = String(doc?.type || "").toLowerCase();
-      return ["equipment", "loot", "tool"].includes(type) && !isArmorShopDoc(doc);
-    }),
-    consumables: withType.filter((doc) => {
-      const type = String(doc?.type || "").toLowerCase();
-      return type === "consumable" && !isScrollShopDoc(doc);
-    }),
-    weapons: withType.filter((doc) => String(doc?.type || "").toLowerCase() === "weapon"),
-    armor: withType.filter((doc) => isArmorShopDoc(doc)),
-    scrolls: withType.filter((doc) => isScrollShopDoc(doc))
+    mixed: [],
+    gear: [],
+    consumables: [],
+    weapons: [],
+    armor: [],
+    scrolls: []
+  };
+  const fallback = {
+    gear: [],
+    consumables: []
   };
 
+  for (const doc of list) {
+    const type = String(doc?.type || "").toLowerCase();
+    if (!SHOP_ALLOWED_TYPES.has(type)) continue;
+    if (!allowMagic && type === "spell") continue;
+    if (!isAllowedItemDoc(doc, allowMagic)) continue;
+
+    out.mixed.push(doc);
+
+    const isWeapon = type === "weapon";
+    const isArmor = isArmorShopDoc(doc);
+    const isScroll = isScrollShopDoc(doc);
+    const isConsumable = type === "consumable";
+
+    if (isWeapon) out.weapons.push(doc);
+    if (isArmor) out.armor.push(doc);
+    if (isScroll) out.scrolls.push(doc);
+
+    if (LOOT_GEAR_TYPES.has(type) && !isArmor) out.gear.push(doc);
+    if (isConsumable && !isScroll) out.consumables.push(doc);
+
+    if (LOOT_GEAR_TYPES.has(type) || isConsumable) fallback.gear.push(doc);
+    if (isConsumable) fallback.consumables.push(doc);
+  }
+
   if (!out.gear.length) {
-    out.gear = withType.filter((doc) => {
-      const type = String(doc?.type || "").toLowerCase();
-      return ["equipment", "loot", "tool", "consumable"].includes(type);
-    });
+    out.gear = fallback.gear.slice();
   }
   if (!out.consumables.length) {
-    out.consumables = withType.filter((doc) => String(doc?.type || "").toLowerCase() === "consumable");
+    out.consumables = fallback.consumables.slice();
   }
-  if (!out.mixed.length) out.mixed = withType;
   return out;
 }
 
@@ -1876,76 +2163,68 @@ function pickWeightedLootCategory() {
   return LOOT_TYPE_WEIGHTS[LOOT_TYPE_WEIGHTS.length - 1]?.type || "gear";
 }
 
+function pickDocByBudgetFromCandidates(candidates, budget, allowMagic) {
+  const preferred = preferDocsByInterfaceLanguage(candidates);
+  if (!preferred.length) return null;
+
+  const range = getBudgetRange(budget, allowMagic);
+  const target = Math.round((Number(range?.min || 0) + Number(range?.max || 0)) / 2);
+  const withinBudget = [];
+  let nearest = null;
+  let pricedCount = 0;
+
+  for (const doc of preferred) {
+    const cp = Number(getItemPriceValue(doc));
+    if (!Number.isFinite(cp) || cp <= 0) continue;
+    pricedCount += 1;
+    if (cp >= range.min && cp <= range.max) {
+      withinBudget.push(doc);
+      continue;
+    }
+    const distance = Math.abs(cp - target);
+    if (!nearest || distance < nearest.distance) {
+      nearest = { doc, distance };
+    }
+  }
+
+  if (withinBudget.length) return pickRandom(withinBudget);
+  if (pricedCount && nearest?.doc) return nearest.doc;
+  return pickRandom(preferred);
+}
+
 function pickShopDocFromPool(pool, seen, budget, allowMagic) {
   const source = Array.isArray(pool) ? pool : [];
   if (!source.length) return null;
-  const unseen = source.filter((doc) => {
+  const candidates = [];
+  for (const doc of source) {
     const key = String(doc?.name || "").trim().toLowerCase();
-    if (!key || seen.has(key)) return false;
-    return isAllowedItemDoc(doc, allowMagic);
-  });
-  if (!unseen.length) return null;
-
-  const preferred = preferDocsByInterfaceLanguage(unseen);
-  const priced = preferred.filter((doc) => {
-    const cp = getItemPriceValue(doc);
-    return Number.isFinite(cp) && cp > 0;
-  });
-  const withinBudget = priced.filter((doc) => isWithinBudget(doc, budget, allowMagic));
-  if (withinBudget.length) return pickRandom(withinBudget);
-
-  if (priced.length) {
-    const range = getBudgetRange(budget, allowMagic);
-    const target = Math.round((Number(range?.min || 0) + Number(range?.max || 0)) / 2);
-    let best = null;
-    for (const doc of priced) {
-      const cp = Number(getItemPriceValue(doc) || 0);
-      const distance = Math.abs(cp - target);
-      if (!best || distance < best.distance) {
-        best = { doc, distance };
-      }
-    }
-    if (best?.doc) return best.doc;
+    if (!key || seen.has(key)) continue;
+    if (!isAllowedItemDoc(doc, allowMagic)) continue;
+    candidates.push(doc);
   }
+  if (!candidates.length) return null;
 
-  return pickRandom(preferred);
+  return pickDocByBudgetFromCandidates(candidates, budget, allowMagic);
 }
 
 function pickLootDocFromPool(pool, seen, budget, allowMagic, uniqueOnly = true) {
   const source = Array.isArray(pool) ? pool : [];
   if (!source.length) return null;
-  const candidates = source.filter((doc) => {
+  const candidates = [];
+  for (const doc of source) {
     const key = normalizeShopSearchKey(doc?.name);
-    if (uniqueOnly && key && seen.has(key)) return false;
-    return isAllowedItemDoc(doc, allowMagic);
-  });
+    if (uniqueOnly && key && seen.has(key)) continue;
+    if (!isAllowedItemDoc(doc, allowMagic)) continue;
+    candidates.push(doc);
+  }
   if (!candidates.length) return null;
 
-  const preferred = preferDocsByInterfaceLanguage(candidates);
-  const priced = preferred.filter((doc) => {
-    const cp = getItemPriceValue(doc);
-    return Number.isFinite(cp) && cp > 0;
-  });
-  const withinBudget = priced.filter((doc) => isWithinBudget(doc, budget, allowMagic));
-  if (withinBudget.length) return pickRandom(withinBudget);
-
-  if (priced.length) {
-    const range = getBudgetRange(budget, allowMagic);
-    const target = Math.round((Number(range?.min || 0) + Number(range?.max || 0)) / 2);
-    let best = null;
-    for (const doc of priced) {
-      const cp = Number(getItemPriceValue(doc) || 0);
-      const distance = Math.abs(cp - target);
-      if (!best || distance < best.distance) best = { doc, distance };
-    }
-    if (best?.doc) return best.doc;
-  }
-
-  return pickRandom(preferred);
+  return pickDocByBudgetFromCandidates(candidates, budget, allowMagic);
 }
 
-function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
-  const item = cloneItemData(toItemData(doc));
+async function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
+  const sourceDoc = await resolveShopSourceDoc(doc);
+  const item = cloneItemData(toItemData(sourceDoc));
   if (!item || typeof item !== "object") return null;
   item.system = item.system && typeof item.system === "object" ? item.system : {};
   item.flags = item.flags && typeof item.flags === "object" ? item.flags : {};
@@ -1953,7 +2232,7 @@ function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
     ? item.flags[MODULE_ID]
     : {};
 
-  const sourceUuid = getSourceUuidForShopDoc(doc);
+  const sourceUuid = getSourceUuidForShopDoc(sourceDoc || doc);
   if (sourceUuid) {
     item.flags[MODULE_ID].shopSourceUuid = sourceUuid;
     item.flags.core = item.flags.core && typeof item.flags.core === "object" ? item.flags.core : {};
@@ -1962,7 +2241,7 @@ function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
     if (!item.flags.dnd5e.sourceId) item.flags.dnd5e.sourceId = sourceUuid;
   }
 
-  applyShopPriceVariance(item, doc, budget, allowMagic);
+  applyShopPriceVariance(item, sourceDoc || doc, budget, allowMagic);
   if (item.system.equipped !== undefined) item.system.equipped = false;
   if (item.system.proficient !== undefined) item.system.proficient = false;
   const quantity = getShopItemQuantity(item, category);
@@ -1970,8 +2249,9 @@ function toShopItemData(doc, category, budget = "normal", allowMagic = false) {
   return item;
 }
 
-function toLootItemData(doc, category) {
-  const item = cloneItemData(toItemData(doc));
+async function toLootItemData(doc, category) {
+  const sourceDoc = await resolveShopSourceDoc(doc);
+  const item = cloneItemData(toItemData(sourceDoc));
   if (!item || typeof item !== "object") return null;
   item.system = item.system && typeof item.system === "object" ? item.system : {};
   item.flags = item.flags && typeof item.flags === "object" ? item.flags : {};
@@ -1979,7 +2259,7 @@ function toLootItemData(doc, category) {
     ? item.flags[MODULE_ID]
     : {};
 
-  const sourceUuid = getSourceUuidForShopDoc(doc);
+  const sourceUuid = getSourceUuidForShopDoc(sourceDoc || doc);
   if (sourceUuid) {
     item.flags[MODULE_ID].lootSourceUuid = sourceUuid;
     item.flags.core = item.flags.core && typeof item.flags.core === "object" ? item.flags.core : {};
@@ -2110,6 +2390,48 @@ function getShopItemQuantity(item, category) {
   if (type === "consumable" && subtype === "ammo") return randInt(5, 20);
   if (type === "consumable") return randInt(1, 6);
   return randInt(1, 5);
+}
+
+async function resolveShopSourceDoc(doc) {
+  if (!doc || typeof doc !== "object") return null;
+  if (!doc.__shopEntryOnly) return doc;
+
+  ensureShopRuntimeCacheState();
+  const packName = String(doc?.pack || doc?.collection || "").trim();
+  const docId = String(doc?._id || doc?.id || "").trim();
+  if (!packName || !docId) return doc;
+
+  const key = `${packName}.${docId}`;
+  if (SHOP_RUNTIME_CACHE.hydratedDocByKey.has(key)) {
+    return SHOP_RUNTIME_CACHE.hydratedDocByKey.get(key);
+  }
+
+  let hydrated = getCachedDoc(packName, docId);
+  if (!hydrated) {
+    const pack = game.packs?.get(packName);
+    if (pack) {
+      try {
+        const loaded = await pack.getDocument(docId);
+        hydrated = loaded?.toObject ? loaded.toObject() : loaded;
+      } catch (err) {
+        console.warn(`NPC Button: Failed to hydrate item "${key}" from compendium.`, err);
+      }
+    }
+  }
+
+  if (!hydrated || typeof hydrated !== "object") {
+    SHOP_RUNTIME_CACHE.hydratedDocByKey.set(key, doc);
+    return doc;
+  }
+
+  const normalized = {
+    ...hydrated,
+    pack: packName,
+    __shopSourceUuid: String(doc.__shopSourceUuid || "").trim() || getSourceUuidForShopDoc(hydrated),
+    __shopEntryOnly: false
+  };
+  SHOP_RUNTIME_CACHE.hydratedDocByKey.set(key, normalized);
+  return normalized;
 }
 
 function getSourceUuidForShopDoc(doc) {
@@ -2257,11 +2579,65 @@ function getCachedItemDocsFromPacks(packs) {
       seen.add(key);
       result.push({
         ...doc,
-        __shopSourceUuid: sourceUuid
+        __shopSourceUuid: sourceUuid,
+        __shopEntryOnly: false
       });
     }
   }
   return result;
+}
+
+function ensureShopRuntimeCacheState() {
+  const source = DATA_CACHE.compendiumCache?.packs || null;
+  if (SHOP_RUNTIME_CACHE.source === source) return;
+  SHOP_RUNTIME_CACHE.source = source;
+  SHOP_RUNTIME_CACHE.docsByPacksKey.clear();
+  SHOP_RUNTIME_CACHE.shopPoolsByKey.clear();
+  SHOP_RUNTIME_CACHE.lootPoolsByKey.clear();
+  SHOP_RUNTIME_CACHE.hydratedDocByKey.clear();
+}
+
+function getShopRuntimePacksKey(packs) {
+  return (packs || []).filter(Boolean).join("|");
+}
+
+async function getItemDocsForPacks(packs) {
+  ensureShopRuntimeCacheState();
+  const key = getShopRuntimePacksKey(packs);
+  if (SHOP_RUNTIME_CACHE.docsByPacksKey.has(key)) {
+    return SHOP_RUNTIME_CACHE.docsByPacksKey.get(key);
+  }
+
+  let docs = getCachedItemDocsFromPacks(packs);
+  if (!docs.length) docs = await collectItemDocsFromPacks(packs);
+  SHOP_RUNTIME_CACHE.docsByPacksKey.set(key, docs);
+  return docs;
+}
+
+async function getShopPoolsForPacks(packs, allowMagic) {
+  ensureShopRuntimeCacheState();
+  const key = `${getShopRuntimePacksKey(packs)}|${allowMagic ? 1 : 0}`;
+  if (SHOP_RUNTIME_CACHE.shopPoolsByKey.has(key)) {
+    return SHOP_RUNTIME_CACHE.shopPoolsByKey.get(key);
+  }
+
+  const docs = await getItemDocsForPacks(packs);
+  const pools = buildShopPoolsFromCache(docs, allowMagic);
+  SHOP_RUNTIME_CACHE.shopPoolsByKey.set(key, pools);
+  return pools;
+}
+
+async function getLootPoolsForPacks(packs, allowMagic) {
+  ensureShopRuntimeCacheState();
+  const key = `${getShopRuntimePacksKey(packs)}|${allowMagic ? 1 : 0}`;
+  if (SHOP_RUNTIME_CACHE.lootPoolsByKey.has(key)) {
+    return SHOP_RUNTIME_CACHE.lootPoolsByKey.get(key);
+  }
+
+  const docs = await getItemDocsForPacks(packs);
+  const pools = buildLootPoolsFromCache(docs, allowMagic);
+  SHOP_RUNTIME_CACHE.lootPoolsByKey.set(key, pools);
+  return pools;
 }
 
 async function collectItemDocsFromPacks(packs) {
@@ -2271,27 +2647,23 @@ async function collectItemDocsFromPacks(packs) {
     const pack = game.packs?.get(packName);
     if (!pack) continue;
     try {
-      const docs = await pack.getDocuments();
-      for (const doc of docs || []) {
-        const data = doc?.toObject ? doc.toObject() : doc;
-        const docId = String(doc?.id || data?._id || data?.id || "");
-        const sourceUuid = String(
-          doc?.uuid ||
-          data?.uuid ||
-          data?.flags?.core?.sourceId ||
-          data?.flags?.dnd5e?.sourceId ||
-          `Compendium.${pack.collection}.Item.${docId}`
-        );
-        const key = String(sourceUuid || `${pack.collection}.${docId}`);
-        if (!data || !key || seen.has(key)) continue;
+      const index = await getPackIndex(pack, SHOP_RUNTIME_INDEX_FIELDS);
+      for (const entry of index || []) {
+        const docId = String(entry?._id || "");
+        if (!docId) continue;
+        const sourceUuid = `Compendium.${pack.collection}.Item.${docId}`;
+        const key = `${pack.collection}.${docId}`;
+        if (seen.has(key)) continue;
         seen.add(key);
         result.push({
-          ...data,
-          __shopSourceUuid: sourceUuid
+          ...entry,
+          pack: pack.collection,
+          __shopSourceUuid: sourceUuid,
+          __shopEntryOnly: true
         });
       }
     } catch (err) {
-      console.warn(`NPC Button: Failed to load item docs from pack "${packName}".`, err);
+      console.warn(`NPC Button: Failed to read item index from pack "${packName}".`, err);
     }
   }
   return result;
@@ -3269,36 +3641,44 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
     ? speciesList.find((entry) => entry.key === speciesKey) || null
     : null;
 
-  const buildResults = [];
-  for (let index = 0; index < blueprints.length; index++) {
-    const source = blueprints[index];
-    const parsedBlueprint = validateAndNormalizeImportedBlueprint(source, index);
-    parsedBlueprint.tier = Number(parsedBlueprint.tier || 0) > 0 ? parsedBlueprint.tier : tier;
-    parsedBlueprint.budget = String(parsedBlueprint.budget || "").trim() || budgetInput;
-    parsedBlueprint.includeLoot = includeLoot;
-    parsedBlueprint.includeSecret = includeSecret;
-    parsedBlueprint.includeHook = includeHook;
-    parsedBlueprint.importantNpc = importantNpc;
-    if (!parsedBlueprint.className && parsedBlueprint.class) {
-      parsedBlueprint.className = String(parsedBlueprint.class || "").trim();
-    }
-    if (!parsedBlueprint.race && selectedSpecies?.name) {
-      parsedBlueprint.race = selectedSpecies.name;
-    }
+  const importBuildProgress = createProgressReporter({
+    label: i18nText("ui.progress.importBuilding", "Import: building actor data"),
+    total: blueprints.length
+  });
+  const buildResults = await mapWithConcurrencyPreserveOrder(
+    blueprints,
+    UI_BUILD_MAX_CONCURRENCY,
+    async (source, index) => {
+      const parsedBlueprint = validateAndNormalizeImportedBlueprint(source, index);
+      parsedBlueprint.tier = Number(parsedBlueprint.tier || 0) > 0 ? parsedBlueprint.tier : tier;
+      parsedBlueprint.budget = String(parsedBlueprint.budget || "").trim() || budgetInput;
+      parsedBlueprint.includeLoot = includeLoot;
+      parsedBlueprint.includeSecret = includeSecret;
+      parsedBlueprint.includeHook = includeHook;
+      parsedBlueprint.importantNpc = importantNpc;
+      if (!parsedBlueprint.className && parsedBlueprint.class) {
+        parsedBlueprint.className = String(parsedBlueprint.class || "").trim();
+      }
+      if (!parsedBlueprint.race && selectedSpecies?.name) {
+        parsedBlueprint.race = selectedSpecies.name;
+      }
 
-    const result = await buildActorDataFromAiBlueprint(parsedBlueprint, folderId, { collectMatchDetails: true });
-    if (!result?.actorData) {
-      throw new Error(i18nText("ui.importErrorBuildActorData"));
-    }
-    buildResults.push({
-      sourceName: String(parsedBlueprint?.name || result?.actorData?.name || "").trim(),
-      actorData: result.actorData,
-      speciesEntry: findSpeciesEntryByRace(speciesList, parsedBlueprint.race) || selectedSpecies || null,
-      resolvedItems: Number(result.resolvedItems || 0),
-      missingItems: Number(result.missingItems || 0),
-      matchDetails: Array.isArray(result.matchDetails) ? result.matchDetails : []
-    });
-  }
+      const result = await buildActorDataFromAiBlueprint(parsedBlueprint, folderId, { collectMatchDetails: true });
+      if (!result?.actorData) {
+        throw new Error(i18nText("ui.importErrorBuildActorData"));
+      }
+      return {
+        sourceName: String(parsedBlueprint?.name || result?.actorData?.name || "").trim(),
+        actorData: result.actorData,
+        speciesEntry: findSpeciesEntryByRace(speciesList, parsedBlueprint.race) || selectedSpecies || null,
+        resolvedItems: Number(result.resolvedItems || 0),
+        missingItems: Number(result.missingItems || 0),
+        matchDetails: Array.isArray(result.matchDetails) ? result.matchDetails : []
+      };
+    },
+    () => importBuildProgress.tick()
+  );
+  importBuildProgress.finish();
 
   if (!buildResults.length) {
     throw new Error(i18nText("ui.importErrorNoEntriesParsed"));
@@ -3309,18 +3689,57 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
     if (!confirmed) return;
   }
 
-  const created = typeof Actor.createDocuments === "function"
-    ? await Actor.createDocuments(buildResults.map((entry) => entry.actorData))
-    : await Promise.all(buildResults.map((entry) => Actor.create(entry.actorData)));
+  const actorDataList = buildResults.map((entry) => entry.actorData);
+  const createProgress = createProgressReporter({
+    label: i18nText("ui.progress.importCreating", "Import: creating actors"),
+    total: actorDataList.filter((entry) => isActorDataPayload(entry)).length
+  });
+  const {
+    created,
+    createdCount,
+    skippedCount
+  } = await createActorsInBatches(actorDataList, {
+    chunkSize: getActorCreateBatchSize(actorDataList.length),
+    onProgress: (done) => createProgress.set(done)
+  });
+  createProgress.finish();
+  const createdActors = (created || []).filter(Boolean);
+  if (skippedCount) {
+    ui.notifications?.warn(
+      i18nFormat(
+        "ui.warnSkippedInvalidActorData",
+        { count: skippedCount },
+        `Skipped ${skippedCount} invalid imported NPC entries before actor creation.`
+      )
+    );
+  }
+  if (!createdActors.length) {
+    ui.notifications?.warn(i18nText("ui.warnNoActorsCreated", "No NPC actors were created."));
+    return;
+  }
+  const failedCreateCount = Math.max(0, actorDataList.length - skippedCount - createdCount);
+  if (failedCreateCount > 0) {
+    ui.notifications?.warn(
+      i18nFormat(
+        "ui.warnCreateNpcPartial",
+        { count: failedCreateCount },
+        `Failed to create ${failedCreateCount} imported NPC(s).`
+      )
+    );
+  }
 
   const pairs = buildResults.map((entry, index) => ({
     actor: created?.[index],
     speciesEntry: entry.speciesEntry
   }));
-  for (const pair of pairs) {
+  const speciesTargets = pairs.filter((entry) => entry.actor && entry.speciesEntry);
+  const speciesProgress = createProgressReporter({
+    label: i18nText("ui.progress.importSpecies", "Import: applying species data"),
+    total: speciesTargets.length
+  });
+  for (const pair of speciesTargets) {
     const actor = pair.actor;
     const speciesEntry = pair.speciesEntry;
-    if (!actor || !speciesEntry) continue;
     try {
       const speciesItem = await buildSpeciesItem(speciesEntry);
       if (!speciesItem) continue;
@@ -3332,13 +3751,16 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
       await applySpeciesAdvancements(actor, createdItem);
     } catch (err) {
       console.warn(`NPC Button: Failed to apply imported species for "${actor?.name || "Unknown"}".`, err);
+    } finally {
+      speciesProgress.tick();
     }
   }
+  speciesProgress.finish();
 
   const resolved = buildResults.reduce((sum, entry) => sum + entry.resolvedItems, 0);
   const missing = buildResults.reduce((sum, entry) => sum + entry.missingItems, 0);
-  if ((created || []).length === 1) {
-    const actor = created?.[0];
+  if (createdActors.length === 1) {
+    const actor = createdActors[0];
     if (resolved || missing) {
       ui.notifications?.info(
         i18nFormat("ui.infoImportedSingleWithCompendium", {
@@ -3353,7 +3775,7 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
     return;
   }
 
-  const count = (created || []).length;
+  const count = createdActors.length;
   if (resolved || missing) {
     ui.notifications?.info(
       i18nFormat("ui.infoImportedManyWithCompendium", { count, resolved, missing })
