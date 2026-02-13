@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 1.0.0
 - Major interface refresh: the generator now looks cleaner, more modern, and is easier to use during long sessions.
 - Quest Board has been fully upgraded with a dedicated mode, a clearer flow, and a polished GM journal output.
 - AI workflow has been streamlined with fewer steps and a smoother generate/export/import experience.
