@@ -1,5 +1,5 @@
 [![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/ddmtvtt)
-[![Latest Release](https://img.shields.io/github/v/release/DeadMate/foundry-vtt-simple-npc-generator?sort=semver)](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases/latest)
+[![Latest Release](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/DeadMate/foundry-vtt-simple-npc-generator/master/module.json&query=%24.version&label=Latest%20Release)](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases/latest)
 [![Foundry Compatibility](https://img.shields.io/badge/Foundry-v13-ff6400)](https://foundryvtt.com/)
 [![CI Status](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/actions/workflows/release.yml/badge.svg)](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/actions/workflows/release.yml)
 [![Downloads](https://img.shields.io/github/downloads/DeadMate/foundry-vtt-simple-npc-generator/total)](https://github.com/DeadMate/foundry-vtt-simple-npc-generator/releases)
