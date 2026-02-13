@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 0.9.4
 - Faster creation for large NPC batches and imported JSON encounters.
 - Better item matching from compendiums for AI-generated/imported NPCs, with fewer misses.
 - New progress bars for long actions (planning, building, creating, and species application) so you can see generation status in real time.
