@@ -1,7 +1,12 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Major interface refresh: the generator now looks cleaner, more modern, and is easier to use during long sessions.
+- Quest Board has been fully upgraded with a dedicated mode, a clearer flow, and a polished GM journal output.
+- AI workflow has been streamlined with fewer steps and a smoother generate/export/import experience.
+- NPC and quest-related names now align more consistently with a fantasy style.
+- Large generation runs feel faster and safer, with clearer progress visibility for long operations.
+- Version 1.0.0 focuses on user experience quality: less friction, more control, and a more premium overall feel.
 
 ## 0.9.4
 - Faster creation for large NPC batches and imported JSON encounters.

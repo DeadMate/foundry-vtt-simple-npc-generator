@@ -24,195 +24,435 @@ export function buildNpcDialogContent({
 }) {
   return `
     <style>
-      .npc-btn-form { display: flex; flex-direction: column; gap: 0.75rem; }
-      .npc-btn-shell {
+      @keyframes npc-btn-rise {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes npc-btn-shine {
+        from { transform: translateX(-70%); opacity: 0; }
+        45% { opacity: 0.5; }
+        to { transform: translateX(140%); opacity: 0; }
+      }
+
+      .npc-btn-dialog-app .window-header {
+        border: none;
+        border-radius: 14px 14px 0 0;
+        background: linear-gradient(125deg, #20222c, #101319);
+        color: #f7e8c8;
+      }
+      .npc-btn-dialog-app .window-content {
+        border-radius: 0 0 14px 14px;
+        background:
+          radial-gradient(circle at 0% 0%, rgba(123, 185, 244, 0.12), transparent 28%),
+          radial-gradient(circle at 100% 0%, rgba(255, 188, 98, 0.12), transparent 28%),
+          linear-gradient(165deg, #0d1218, #171f2b);
+      }
+
+      .npc-btn-form {
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
-        padding: 0.8rem;
-        border-radius: 14px;
-        color: #edf2ff;
-        background: linear-gradient(165deg, rgba(25, 31, 45, 0.98), rgba(14, 18, 29, 0.98));
-        border: 1px solid rgba(129, 156, 219, 0.45);
+        gap: 0.82rem;
+        max-height: min(80vh, 920px);
+        overflow: auto;
+        padding-right: 0.15rem;
+        scrollbar-gutter: stable;
+      }
+      .npc-btn-form::-webkit-scrollbar { width: 8px; }
+      .npc-btn-form::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: linear-gradient(180deg, #e1b873, #8f6233);
+      }
+
+      .npc-btn-shell {
+        --paper-0: #f4ead7;
+        --paper-1: #e5d1af;
+        --paper-line: rgba(88, 64, 34, 0.08);
+        --ink-main: #2b2014;
+        --ink-soft: #5a4530;
+        --gold: #d59a4a;
+        --gold-soft: #f2d39f;
+        --obsidian-0: #121823;
+        --obsidian-1: #1d2838;
+
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+        padding: 0.95rem;
+        border-radius: 16px;
+        border: 1px solid rgba(223, 182, 118, 0.4);
+        color: #f6efdf;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.52);
+        background:
+          radial-gradient(circle at 8% -6%, rgba(105, 170, 242, 0.22), transparent 28%),
+          radial-gradient(circle at 100% 0%, rgba(241, 175, 89, 0.2), transparent 24%),
+          linear-gradient(165deg, var(--obsidian-0), var(--obsidian-1));
+        animation: npc-btn-rise 240ms ease-out;
       }
       .npc-btn-shell,
       .npc-btn-shell label,
       .npc-btn-shell span,
       .npc-btn-shell p,
       .npc-btn-shell h3,
-      .npc-btn-shell strong,
-      .npc-btn-shell small { color: #edf2ff; }
+      .npc-btn-shell small,
+      .npc-btn-shell strong { color: #f6efdf; }
+
       .npc-btn-hero {
+        position: relative;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        gap: 0.75rem;
-        padding: 0.65rem 0.75rem;
-        border-radius: 10px;
-        background: rgba(73, 104, 171, 0.18);
-        border: 1px solid rgba(125, 162, 236, 0.55);
+        gap: 0.7rem;
+        padding: 0.8rem 0.9rem;
+        border-radius: 12px;
+        border: 1px solid rgba(229, 190, 132, 0.44);
+        background: linear-gradient(130deg, rgba(30, 38, 52, 0.82), rgba(16, 21, 31, 0.95));
+        overflow: hidden;
       }
-      .npc-btn-hero strong { font-size: 1rem; letter-spacing: 0.02em; color: #ffffff; }
-      .npc-btn-hero small { display: block; opacity: 0.95; margin-top: 0.1rem; color: #dbe7ff; }
+      .npc-btn-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 -40%;
+        width: 30%;
+        background: linear-gradient(95deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+        animation: npc-btn-shine 2.8s ease-out 0.3s 1;
+      }
+      .npc-btn-hero strong {
+        display: block;
+        margin: 0 0 0.1rem;
+        font-family: "Cinzel", "Trajan Pro", "Georgia", serif;
+        font-size: 1.08rem;
+        letter-spacing: 0.04em;
+      }
+      .npc-btn-hero small {
+        display: block;
+        color: #d8c8ac;
+        line-height: 1.25;
+      }
       .npc-btn-badge {
-        font-size: 0.73rem;
+        font-family: "Cinzel", "Trajan Pro", serif;
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
         font-weight: 700;
-        padding: 0.28rem 0.55rem;
         border-radius: 999px;
-        color: #f7fbff;
-        background: rgba(78, 155, 255, 0.46);
-        border: 1px solid rgba(162, 208, 255, 0.95);
+        padding: 0.28rem 0.58rem;
+        color: #2f1f0d;
+        background: linear-gradient(180deg, #f8d7a0, #cc8e41);
+        border: 1px solid rgba(255, 225, 169, 0.76);
       }
-      .npc-btn-tabs {
+
+      .npcx-workspace {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.4rem;
+        grid-template-columns: 13.2rem minmax(0, 1fr);
+        gap: 0.8rem;
+        min-height: 0;
+      }
+      .npcx-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+        min-width: 0;
+      }
+      .npcx-stage {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+      }
+      .npcx-sidebar-card {
+        border: 1px solid rgba(217, 174, 106, 0.35);
+        border-radius: 10px;
+        padding: 0.55rem 0.62rem;
+        background: linear-gradient(180deg, rgba(35, 44, 58, 0.86), rgba(22, 29, 40, 0.92));
+      }
+      .npcx-sidebar-card strong {
+        display: block;
+        margin: 0 0 0.2rem;
+        font-family: "Cinzel", "Trajan Pro", serif;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        font-size: 0.7rem;
+      }
+      .npcx-sidebar-card p {
+        margin: 0;
+        color: #ccbaa0;
+        font-size: 0.74rem;
+        line-height: 1.3;
+      }
+
+      .npc-btn-tabs {
+        display: flex;
+        flex-direction: column;
+        gap: 0.42rem;
       }
       .npc-btn-tabs button {
-        border-radius: 10px;
+        width: 100%;
         margin: 0;
-        padding: 0.45rem 0.7rem;
-        font-weight: 600;
-        color: #e3ebff;
-        border: 1px solid #5f6e97;
-        background: linear-gradient(180deg, #2c3854, #212b42);
+        border-radius: 9px;
+        border: 1px solid rgba(210, 170, 111, 0.5);
+        padding: 0.56rem 0.58rem;
+        text-align: left;
+        color: #ead7ba;
+        background: linear-gradient(180deg, rgba(44, 57, 76, 0.92), rgba(26, 34, 48, 0.92));
+        font-family: "Cinzel", "Trajan Pro", serif;
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        transition: transform 120ms ease, filter 120ms ease, border-color 120ms ease;
+      }
+      .npc-btn-tabs button:hover {
+        transform: translateX(2px);
+        filter: brightness(1.08);
+        border-color: rgba(249, 218, 164, 0.8);
       }
       .npc-btn-tabs button.active {
-        color: #ffffff;
-        background: linear-gradient(180deg, #488ff0, #316cc2);
-        border-color: #a8cbff;
+        color: #2f210f;
+        background: linear-gradient(180deg, #f3cf96, #d79948);
+        border-color: rgba(255, 232, 189, 0.86);
       }
-      .npc-btn-shell button {
-        color: #f2f7ff;
-        border: 1px solid #60719d;
-        background: linear-gradient(180deg, #31405f, #27324d);
-        text-shadow: none;
+
+      .npc-btn-tools-strip {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.4rem;
+        padding: 0.56rem 0.62rem;
+        border-radius: 10px;
+        border: 1px solid rgba(212, 171, 109, 0.34);
+        background: linear-gradient(180deg, rgba(25, 33, 47, 0.92), rgba(18, 24, 35, 0.94));
       }
-      .npc-btn-shell button:hover {
-        border-color: #92b8ff;
-        background: linear-gradient(180deg, #3a4d74, #2f4063);
+      .npc-btn-tools-strip .checkbox {
+        margin: 0;
+        font-size: 0.82rem;
       }
-      .npc-btn-shell button:disabled {
-        opacity: 0.6;
-        color: #b5bfd8;
+
+      .npc-btn-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.72rem;
+        animation: npc-btn-rise 220ms ease-out;
       }
-      .npc-btn-panel { display: flex; flex-direction: column; gap: 0.75rem; }
       .npc-btn-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.6rem;
+        gap: 0.7rem;
+        align-items: start;
       }
       .npc-btn-card {
+        position: relative;
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
-        padding: 0.65rem;
-        border-radius: 10px;
-        border: 1px solid rgba(123, 149, 206, 0.5);
-        background: rgba(49, 64, 95, 0.32);
-      }
-      .npc-btn-card h3 {
-        margin: 0;
-        font-size: 0.82rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #d8e5ff;
+        border-radius: 12px;
+        border: 1px solid rgba(162, 119, 60, 0.42);
+        padding: 0.74rem;
+        background:
+          linear-gradient(176deg, var(--paper-0), var(--paper-1)),
+          repeating-linear-gradient(0deg, var(--paper-line) 0, var(--paper-line) 1px, transparent 1px, transparent 6px);
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
       }
       .npc-btn-span-2 { grid-column: 1 / -1; }
-      .npc-btn-field { display: flex; flex-direction: column; gap: 0.25rem; }
-      .npc-btn-field > span { font-size: 0.78rem; opacity: 0.88; }
-      .npc-btn-row { display: flex; gap: 0.45rem; align-items: center; }
-      .npc-btn-row > * { flex: 1; }
-      .npc-btn-row .npc-btn-roll { flex: 0 0 auto; width: 2.2rem; padding: 0; }
-      .npc-btn-row .npc-btn-stepper { flex: 0 0 auto; width: 2rem; padding: 0; }
+      .npc-btn-card,
+      .npc-btn-card label,
+      .npc-btn-card span,
+      .npc-btn-card p,
+      .npc-btn-card h3,
+      .npc-btn-card small,
+      .npc-btn-card strong { color: var(--ink-main); }
+      .npc-btn-card h3 {
+        margin: 0;
+        font-family: "Cinzel", "Trajan Pro", serif;
+        font-size: 0.71rem;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: #4b341a;
+      }
+
+      .npc-btn-field { display: flex; flex-direction: column; gap: 0.24rem; min-width: 0; }
+      .npc-btn-field > span {
+        font-size: 0.69rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+        font-weight: 600;
+      }
+      .npc-btn-row { display: flex; gap: 0.42rem; align-items: center; min-width: 0; }
+      .npc-btn-row > * { flex: 1; min-width: 0; }
+      .npc-btn-row .npc-btn-roll,
+      .npc-btn-row .npc-btn-stepper {
+        flex: 0 0 auto;
+        width: 2.1rem;
+        padding: 0;
+      }
+
       .npc-btn-field select,
       .npc-btn-field input[type="text"],
-      .npc-btn-field input[type="number"] {
+      .npc-btn-field input[type="number"],
+      .npc-btn-field textarea {
         width: 100%;
-        color: #f3f7ff;
-        border-radius: 8px;
-        border: 1px solid #6073a5;
-        background: #11192b;
+        box-sizing: border-box;
+        min-height: 2.04rem;
+        border-radius: 9px;
+        border: 1px solid rgba(123, 91, 56, 0.46);
+        padding: 0.36rem 0.52rem;
+        color: #302112;
+        background: rgba(255, 249, 237, 0.94);
+        font-family: "Spectral", "Georgia", serif;
+      }
+      .npc-btn-field textarea {
+        min-height: 5.3rem;
+        resize: vertical;
+        line-height: 1.32;
       }
       .npc-btn-field select option,
       .npc-btn-field select optgroup {
-        color: #172033;
-        background: #f5f8ff;
+        color: #302112;
+        background: #fdf5e4;
       }
       .npc-btn-field select:focus,
       .npc-btn-field input[type="text"]:focus,
-      .npc-btn-field input[type="number"]:focus {
+      .npc-btn-field input[type="number"]:focus,
+      .npc-btn-field textarea:focus {
         outline: none;
-        border-color: #9fc1ff;
-        box-shadow: 0 0 0 1px rgba(160, 193, 255, 0.35);
+        border-color: var(--gold);
+        box-shadow: 0 0 0 2px rgba(213, 154, 74, 0.26);
       }
+
       .npc-btn-checks {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 0.35rem 0.6rem;
+        gap: 0.34rem 0.58rem;
       }
       .npc-btn-checks--single { grid-template-columns: 1fr; }
       .npc-btn-shell .checkbox {
         display: flex;
         align-items: flex-start;
-        gap: 0.45rem;
-        line-height: 1.25;
+        gap: 0.44rem;
+        line-height: 1.27;
       }
       .npc-btn-shell .checkbox input[type="checkbox"] {
         flex: 0 0 auto;
-        margin: 0.12rem 0 0;
+        margin: 0.14rem 0 0;
+        accent-color: #d59a4a;
       }
       .npc-btn-note {
         margin: 0;
-        font-size: 0.78rem;
-        line-height: 1.3;
-        color: #c9d8f6;
+        font-size: 0.75rem;
+        line-height: 1.31;
+        color: #d8c7aa;
       }
-      .npc-btn-shell .checkbox { color: #edf2ff; }
-      .npc-btn-shop-actions {
+      .npc-btn-card .npc-btn-note { color: #59432d; }
+
+      .npc-btn-shell button {
+        color: #fff7e9;
+        border: 1px solid rgba(227, 189, 128, 0.68);
+        border-radius: 9px;
+        background: linear-gradient(180deg, #5f789d, #465b79);
+        font-family: "Cinzel", "Trajan Pro", serif;
+        font-size: 0.71rem;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        font-weight: 700;
+        transition: transform 120ms ease, filter 120ms ease, border-color 120ms ease;
+      }
+      .npc-btn-shell button:hover {
+        transform: translateY(-1px);
+        filter: brightness(1.08);
+        border-color: rgba(255, 230, 183, 0.92);
+      }
+      .npc-btn-shell button:disabled {
+        opacity: 0.56;
+        transform: none;
+        filter: none;
+      }
+
+      .npc-btn-shop-actions,
+      .npc-btn-ai-actions {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 0.4rem;
       }
-      .npc-btn-shop-actions button {
-        min-height: 2rem;
+      .npc-btn-shop-actions button,
+      .npc-btn-ai-actions button {
+        min-height: 2.04rem;
         white-space: normal;
         line-height: 1.2;
-        font-size: 0.78rem;
       }
-      .npc-btn-ai-group { gap: 0.6rem; }
+      .npc-btn-ai-group { gap: 0.58rem; }
       .npc-btn-ai-top {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        gap: 0.75rem;
+        gap: 0.5rem;
       }
-      .npc-btn-ai-top h3 { margin: 0; font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.04em; }
-      .npc-btn-ai-controls { display: none; flex-direction: column; align-items: stretch; gap: 0.5rem; }
-      .npc-btn-ai-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
-      .npc-btn-ai-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem 0.6rem; }
-      .npc-btn-dialog-buttons { display: flex !important; gap: 0.4rem; }
+      .npc-btn-ai-top h3 {
+        margin: 0;
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .npc-btn-ai-controls { display: none; flex-direction: column; gap: 0.5rem; }
+      .npc-btn-ai-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0.34rem 0.58rem; }
+
+      .npc-btn-quest-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 0.44rem;
+        border-radius: 9px;
+        border: 1px dashed rgba(139, 102, 54, 0.54);
+        padding: 0.56rem;
+        background: rgba(255, 246, 226, 0.6);
+      }
+
+      .npc-btn-dialog-buttons { display: flex !important; gap: 0.45rem; }
       .npc-btn-dialog-buttons .dialog-button {
         margin: 0;
-        width: 100%;
         flex: 1 1 0;
-        white-space: nowrap;
-        color: #ffffff;
-        border: 1px solid #7ca7f5;
-        background: linear-gradient(180deg, #3f76d6, #2f5fb5);
+        min-height: 2.24rem;
+        white-space: normal;
+        border-radius: 10px;
+        border: 1px solid rgba(230, 188, 122, 0.8);
+        color: #fff7e7;
+        background: linear-gradient(180deg, #e0a952, #ba7836);
+        font-family: "Cinzel", "Trajan Pro", serif;
+        font-size: 0.77rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
       .npc-btn-dialog-buttons .dialog-button:hover {
-        border-color: #b4d0ff;
-        background: linear-gradient(180deg, #4a87ef, #386ecf);
+        border-color: #ffe2b2;
+        background: linear-gradient(180deg, #ebb767, #c7833f);
       }
-      @media (max-width: 700px) {
+      .npc-btn-dialog-buttons .dialog-button[data-button='cancel'] {
+        border-color: rgba(179, 171, 153, 0.72);
+        background: linear-gradient(180deg, #5d697e, #434d60);
+      }
+
+      @media (max-width: 920px) {
+        .npcx-workspace {
+          grid-template-columns: 1fr;
+        }
+        .npcx-sidebar {
+          order: 0;
+        }
+        .npc-btn-tabs {
+          flex-direction: row;
+          flex-wrap: wrap;
+        }
+        .npc-btn-tabs button {
+          flex: 1 1 8rem;
+        }
+      }
+      @media (max-width: 720px) {
         .npc-btn-grid,
         .npc-btn-checks,
         .npc-btn-shop-actions,
         .npc-btn-ai-actions,
         .npc-btn-ai-options { grid-template-columns: 1fr; }
+        .npc-btn-dialog-buttons {
+          flex-direction: column;
+        }
       }
     </style>
     <form class="npc-btn-form">
@@ -228,13 +468,29 @@ export function buildNpcDialogContent({
           <span class="npc-btn-badge">${i18nHtml("ui.dialog.badgeDnd5e")}</span>
         </div>
 
-        <div class="npc-btn-tabs">
-          <button type="button" data-tab="main" class="active">${i18nHtml("ui.dialog.tabMainNpc")}</button>
-          <button type="button" data-tab="encounter">${i18nHtml("ui.dialog.tabEncounter")}</button>
-          <button type="button" data-tab="shop">${i18nHtml("ui.dialog.tabShop")}</button>
-          <button type="button" data-tab="loot">${i18nHtml("ui.dialog.tabLoot")}</button>
-        </div>
+        <div class="npcx-workspace">
+          <aside class="npcx-sidebar">
+            <div class="npc-btn-tabs">
+              <button type="button" data-tab="main" class="active">${i18nHtml("ui.dialog.tabMainNpc")}</button>
+              <button type="button" data-tab="encounter">${i18nHtml("ui.dialog.tabEncounter")}</button>
+              <button type="button" data-tab="shop">${i18nHtml("ui.dialog.tabShop")}</button>
+              <button type="button" data-tab="loot">${i18nHtml("ui.dialog.tabLoot")}</button>
+              <button type="button" data-tab="questboard" data-quest-tab-button style="display:none;">${i18nHtml("ui.dialog.tabQuestBoard")}</button>
+            </div>
 
+            <div class="npc-btn-tools-strip">
+              <label class="checkbox">
+                <input type="checkbox" name="useAi"> ${i18nHtml("ui.dialog.useAiOpenAi")}
+              </label>
+            </div>
+
+            <div class="npcx-sidebar-card">
+              <strong>${i18nHtml("ui.dialog.cardAiTools")}</strong>
+              <p>${i18nHtml("ui.dialog.heroSubtitle")}</p>
+            </div>
+          </aside>
+
+          <section class="npcx-stage">
         <div data-tab-panel="main" class="npc-btn-panel">
           <div class="npc-btn-grid">
             <section class="npc-btn-card">
@@ -509,10 +765,41 @@ export function buildNpcDialogContent({
           </div>
         </div>
 
+        <div data-tab-panel="questboard" class="npc-btn-panel" style="display: none;">
+          <div class="npc-btn-grid">
+            <section class="npc-btn-card">
+              <h3>${i18nHtml("ui.dialog.cardQuestBoardSetup")}</h3>
+              <label class="npc-btn-field">
+                <span>${i18nHtml("ui.dialog.questBoardCount")}</span>
+                <input type="number" name="questBoardCount" value="3" min="1" max="20">
+              </label>
+              <label class="npc-btn-field">
+                <span>${i18nHtml("ui.dialog.questBoardCustomPrompt")}</span>
+                <textarea
+                  name="questBoardPromptExtra"
+                  rows="4"
+                  placeholder="${i18nHtml("ui.dialog.questBoardCustomPromptPlaceholder")}"></textarea>
+              </label>
+              <p class="npc-btn-note">${i18nHtml("ui.dialog.questBoardCountNote")}</p>
+            </section>
+
+            <section class="npc-btn-card npc-btn-span-2">
+              <h3>${i18nHtml("ui.dialog.cardQuestBoardActions")}</h3>
+              <div class="npc-btn-quest-actions" data-ai-quest-actions>
+                <div class="npc-btn-ai-actions">
+                  <button type="button" data-action="quest-copy-prompt" data-quest-manual-action>${i18nHtml("ui.dialog.questCopyPrompt")}</button>
+                  <button type="button" data-action="quest-import-json" data-quest-manual-action>${i18nHtml("ui.dialog.questImportJson")}</button>
+                  <button type="button" data-action="quest-generate-board">${i18nHtml("ui.dialog.questGenerateBoard")}</button>
+                </div>
+                <p class="npc-btn-note">${i18nHtml("ui.dialog.questBoardNote")}</p>
+              </div>
+            </section>
+          </div>
+        </div>
+
         <section class="npc-btn-card npc-btn-ai-group" data-ai-section>
           <div class="npc-btn-ai-top">
             <h3>${i18nHtml("ui.dialog.cardAiTools")}</h3>
-            <label class="checkbox"><input type="checkbox" name="useAi"> ${i18nHtml("ui.dialog.useAiOpenAi")}</label>
           </div>
           <div class="npc-btn-ai-controls" data-ai-controls>
             <div class="npc-btn-ai-actions" data-ai-npc-actions>
@@ -548,6 +835,8 @@ export function buildNpcDialogContent({
             </p>
           </div>
         </section>
+          </section>
+        </div>
       </div>
     </form>
   `;

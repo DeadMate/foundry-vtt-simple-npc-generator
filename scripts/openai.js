@@ -231,6 +231,8 @@ export async function generateNpcFlavorWithOpenAi(npc) {
     "You generate high-quality D&D 5e NPC flavor for live tabletop play.",
     "Return strict JSON only with keys: name, appearance, speech, motivation, secret, hook, quirk, rumor, mannerism.",
     "Write concrete, playable text; avoid vague fragments and generic filler.",
+    "NPC names must be high-fantasy, setting-appropriate, and non-modern.",
+    "Avoid contemporary real-world personal names and surnames.",
     `Write all flavor text in ${language.name}.`,
     "Every non-empty text field must be a complete sentence.",
     "Do not use markdown. Do not add extra keys."
@@ -314,6 +316,8 @@ export async function generateFullNpcWithOpenAi(context = {}) {
     "You generate complete D&D 5e NPC blueprints for Foundry VTT import.",
     "Return strict JSON only.",
     "Prioritize practical gameplay output: coherent stats, concrete personality, and real compendium-friendly item names.",
+    "NPC names must be high-fantasy, setting-appropriate, and non-modern.",
+    "Avoid contemporary real-world personal names and surnames.",
     `Write narrative fields in ${language.name}.`,
     `Prefer item/spell/feature/action names in ${language.name} if available; otherwise use English canonical names.`,
     "Do not list basic weapon attacks as features.",
@@ -391,6 +395,7 @@ export function buildManualEncounterNpcPrompt(context = {}) {
     "- Do not put weapon-specific attack lines into \"features\".",
     "- \"actions\" should include only named non-weapon special actions; otherwise use [].",
     "- If unsure a feature/action exists in compendiums, use [] instead of invented names.",
+    "- NPC \"name\" must be high-fantasy and setting-appropriate; avoid modern real-world personal names.",
     "- If unknown: use \"None\", 0, or [] (never null).",
     "- After the required keys, also include these extra keys in this order for richer import:",
     "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
@@ -417,6 +422,72 @@ export function buildManualEncounterNpcPrompt(context = {}) {
     `- Encounter difficulty: ${sanitizeFlavorText(context.encounterDifficulty || "", 20) || "medium"}`,
     `- Interface language: ${language.code}`
   ].join("\n");
+}
+
+/**
+ * Generate quest board payload via OpenAI
+ * @param {Object} context - Quest board generation context
+ * @returns {Promise<Object>} Normalized quest board payload
+ */
+export async function generateQuestBoardWithOpenAi(context = {}) {
+  if (!game.user?.isGM) {
+    throw new Error(t("openai.errorGmOnlyGeneration"));
+  }
+
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    throw new Error(t("openai.errorApiKeyMissing"));
+  }
+
+  const model = String(game.settings?.get(MODULE_ID, SETTING_KEYS.model) || OPENAI_DEFAULT_MODEL).trim() || OPENAI_DEFAULT_MODEL;
+  const baseUrl = normalizeBaseUrl(
+    String(game.settings?.get(MODULE_ID, SETTING_KEYS.baseUrl) || OPENAI_DEFAULT_BASE_URL)
+  );
+  const endpoint = `${baseUrl}/chat/completions`;
+
+  const language = getInterfaceLanguageContext();
+  const systemPrompt = [
+    "You generate DM-ready D&D 5e quest board content for Foundry VTT.",
+    "Return strict JSON only.",
+    "Each quest must be concise, actionable, and playable in 1 session.",
+    "Every quest needs concrete objective steps, clear reward, and useful GM-only notes.",
+    "Any person/place/faction names must feel high-fantasy and setting-appropriate.",
+    "Avoid contemporary real-world personal names and surnames.",
+    `Write all narrative fields in ${language.name}.`,
+    "Do not include markdown or explanations."
+  ].join(" ");
+
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`
+  };
+
+  const requestData = {
+    model,
+    temperature: 0.7,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: buildQuestBoardPrompt(context, { manualCodeBlock: false }) }
+    ]
+  };
+
+  const content = await requestOpenAiChatCompletion(endpoint, headers, requestData);
+  if (!content) {
+    throw new Error(t("openai.errorEmptyResponse"));
+  }
+
+  const parsed = parseJsonContent(content);
+  return normalizeAiQuestBoard(parsed, context);
+}
+
+/**
+ * Build manual ChatGPT prompt for quest board generation (no API required in module)
+ * @param {Object} context - Quest board generation context
+ * @returns {string}
+ */
+export function buildManualQuestBoardPrompt(context = {}) {
+  return buildQuestBoardPrompt(context, { manualCodeBlock: true });
 }
 
 /**
@@ -508,6 +579,7 @@ function buildFullNpcPrompt(context = {}, options = {}) {
     "- Do not put weapon-specific attack lines into \"features\".",
     "- \"actions\" should include only named non-weapon special actions; otherwise use [].",
     "- If unsure a feature/action exists in compendiums, use [] instead of invented names.",
+    "- NPC \"name\" must be high-fantasy and setting-appropriate; avoid modern real-world personal names.",
     "- If unknown: use \"None\", 0, or [] (never null).",
     "- After the required keys, also include these extra keys in this order for richer import:",
     "  \"appearance\" (array), \"speech\", \"motivation\", \"secret\", \"hook\", \"quirk\", \"rumor\", \"mannerism\".",
@@ -533,6 +605,60 @@ function buildFullNpcPrompt(context = {}, options = {}) {
     `- Encounter difficulty: ${sanitizeFlavorText(context.encounterDifficulty || "", 20) || "medium"}`,
     `- Interface language: ${language.code}`
   ].join("\n");
+}
+
+function buildQuestBoardPrompt(context = {}, options = {}) {
+  const manualCodeBlock = !!options.manualCodeBlock;
+  const count = clampNumber(context.count, 1, 20, 3);
+  const partyLevel = clampNumber(context.partyLevel, 1, 20, 3);
+  const partySize = clampNumber(context.partySize, 1, 8, 4);
+  const difficulty = sanitizeFlavorText(context.difficulty, 30) || "medium";
+  const location = sanitizeFlavorText(context.location, 80) || "any location";
+  const tone = sanitizeFlavorText(context.tone, 80) || "adventure-ready fantasy";
+  const boardTitle = sanitizeFlavorText(context.boardTitle, 100) || "";
+  const customInstruction = sanitizeFlavorText(context.customInstruction, 800) || "";
+  const language = getInterfaceLanguageContext();
+
+  return [
+    manualCodeBlock
+      ? "Output the final answer inside exactly one ```json code block```."
+      : "You must output ONLY one valid JSON object.",
+    manualCodeBlock
+      ? "Do not include text before or after the code block."
+      : "Do not output markdown, comments, or explanation text.",
+    manualCodeBlock ? "JSON inside the code block must be parseable by JSON.parse." : "No text before or after the JSON object.",
+    "",
+    "Generate a D&D 5e quest board payload for Foundry VTT.",
+    "Use this exact key order and schema:",
+    ...getQuestBoardSchemaLines(),
+    "",
+    "Strict formatting rules:",
+    "- Use double quotes for keys and string values.",
+    "- No trailing commas.",
+    "- \"quests\" must contain exactly the requested number of quests.",
+    "- \"tasks\" must contain 3 to 5 actionable steps per quest.",
+    "- \"twists\" must contain 1 to 3 twists per quest.",
+    "- \"reward.gold\" must be a number (0 allowed).",
+    "- Any person/place/faction names must be high-fantasy and setting-appropriate, not modern real-world.",
+    "- If a section is unknown, return empty string or empty array, never null.",
+    `- Write narrative fields in ${language.name}.`,
+    "",
+    "Quest quality rules:",
+    "- Keep each quest playable in one session.",
+    "- Avoid generic filler; include concrete hooks, places, people, and stakes.",
+    "- \"gmDescription\" must include behind-the-scenes context for the DM.",
+    "",
+    "Context preferences:",
+    `- Quest count: ${count}`,
+    `- Party level: ${partyLevel}`,
+    `- Party size: ${partySize}`,
+    `- Difficulty: ${difficulty}`,
+    `- Location hint: ${location}`,
+    `- Tone hint: ${tone}`,
+    `- Preferred board title: ${boardTitle || "Any"}`,
+    `- Interface language: ${language.code}`,
+    customInstruction ? `- Extra GM instruction: ${customInstruction}` : null
+  ].filter(Boolean).join("\n");
 }
 
 function getFullNpcSchemaLines() {
@@ -563,6 +689,160 @@ function getFullNpcSchemaLines() {
     "  \"description\": \"...\"",
     "}"
   ];
+}
+
+function getQuestBoardSchemaLines() {
+  return [
+    "{",
+    "  \"boardTitle\": \"...\",",
+    "  \"boardSummary\": \"...\",",
+    "  \"quests\": [",
+    "    {",
+    "      \"title\": \"...\",",
+    "      \"who\": \"...\",",
+    "      \"what\": \"...\",",
+    "      \"tasks\": [\"...\"],",
+    "      \"reward\": {",
+    "        \"summary\": \"...\",",
+    "        \"gold\": 0,",
+    "        \"items\": [\"...\"]",
+    "      },",
+    "      \"gmDescription\": \"...\",",
+    "      \"twists\": [\"...\"]",
+    "    }",
+    "  ]",
+    "}"
+  ];
+}
+
+function normalizeAiQuestBoard(data, context = {}) {
+  const source = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  const count = clampNumber(context.count, 1, 20, 3);
+  const partyLevel = clampNumber(context.partyLevel, 1, 20, 3);
+  const partySize = clampNumber(context.partySize, 1, 8, 4);
+  const difficulty = sanitizeFlavorText(context.difficulty, 30) || "medium";
+  const boardTitle = sanitizeFlavorText(
+    source.boardTitle || source.title || context.boardTitle || "",
+    120
+  );
+  const boardSummary = ensureSentence(
+    sanitizeFlavorText(source.boardSummary || source.summary || source.description || "", 420)
+  );
+
+  const nestedBoard = source.board && typeof source.board === "object" ? source.board : {};
+  const questSource = Array.isArray(source.quests)
+    ? source.quests
+    : Array.isArray(nestedBoard.quests)
+      ? nestedBoard.quests
+      : [];
+
+  const quests = [];
+  for (let index = 0; index < questSource.length; index++) {
+    const normalized = normalizeAiQuestEntry(questSource[index], index + 1);
+    if (!normalized) continue;
+    quests.push(normalized);
+    if (quests.length >= count) break;
+  }
+
+  while (quests.length < count) {
+    quests.push(buildFallbackQuestEntry(quests.length + 1));
+  }
+
+  return {
+    boardTitle: boardTitle || "Quest Board",
+    boardSummary: boardSummary || "Fresh leads are pinned to the board for adventurers looking for trouble and reward.",
+    partyLevel,
+    partySize,
+    difficulty,
+    quests
+  };
+}
+
+function normalizeAiQuestEntry(entry, index = 1) {
+  const source = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : null;
+  if (!source) return null;
+
+  const title = sanitizeFlavorText(source.title || source.name || source.questTitle || "", 140);
+  const who = sanitizeFlavorText(
+    source.who || source.patron || source.questGiver || source.client || source.employer || "",
+    220
+  );
+  const what = sanitizeFlavorText(
+    source.what || source.objective || source.goal || source.problem || "",
+    320
+  );
+  const tasks = normalizeStringArray(
+    source.tasks || source.steps || source.objectives || source.checklist,
+    5,
+    220
+  );
+  const twists = normalizeStringArray(
+    source.twists || source.complications || source.turns || source.secrets,
+    3,
+    220
+  );
+  const gmDescription = sanitizeFlavorText(
+    source.gmDescription || source.gmNotes || source.notesForGM || source.description || "",
+    500
+  );
+
+  const rewardSource = source.reward && typeof source.reward === "object" ? source.reward : {};
+  const rewardSummary = sanitizeFlavorText(
+    rewardSource.summary || source.rewardSummary || source.reward || "",
+    240
+  );
+  const rewardGold = clampNumber(
+    rewardSource.gold ?? rewardSource.goldGp ?? source.rewardGold ?? source.gold,
+    0,
+    500000,
+    0
+  );
+  const rewardItems = normalizeStringArray(
+    rewardSource.items || source.rewardItems || source.items,
+    6,
+    120
+  );
+
+  const normalized = {
+    title: title || `Quest #${index}`,
+    who: ensureSentence(who) || "A local contact posts this request for capable adventurers.",
+    what: ensureSentence(what) || "Resolve the situation before it escalates and harms the settlement.",
+    tasks: tasks.length
+      ? tasks
+      : [
+          "Gather information and identify the primary lead.",
+          "Reach the location tied to the threat.",
+          "Resolve the conflict and report back."
+        ],
+    reward: {
+      summary: ensureSentence(rewardSummary) || "Coin, supplies, and local favor.",
+      gold: rewardGold,
+      items: rewardItems
+    },
+    gmDescription: ensureSentence(gmDescription) || "Keep pressure high with NPC motives, limited time, and at least one social complication.",
+    twists: twists.length ? twists : ["Someone close to the patron is involved in the problem."]
+  };
+  return normalized;
+}
+
+function buildFallbackQuestEntry(index = 1) {
+  return {
+    title: `Quest #${index}`,
+    who: "A worried local elder asks for discreet help.",
+    what: "Investigate the disturbance, expose its cause, and secure the area.",
+    tasks: [
+      "Interview witnesses and inspect the scene.",
+      "Track the source of the disturbance.",
+      "Resolve the threat and return proof."
+    ],
+    reward: {
+      summary: "A practical payment and local goodwill.",
+      gold: 75,
+      items: []
+    },
+    gmDescription: "Escalate tension with rumors, one false lead, and a final confrontation tied to local politics.",
+    twists: ["The supposed victim is hiding a key part of the truth."]
+  };
 }
 
 function normalizeAiFullNpc(data, context = {}) {
@@ -1240,7 +1520,7 @@ function buildFlavorPrompt(npc, options = {}) {
       writeFlavorIn: language.name
     },
     outputSchema: {
-      name: "2-4 words full fantasy-style name, culturally fitting, readable, and suitable for reuse in an Actor sheet",
+      name: "2-4 words high-fantasy name, culturally fitting, readable, and suitable for reuse in an Actor sheet; never modern real-world naming style",
       appearance: "array of 3 physical details, each 4-10 words, concrete and visual",
       speech: "1 complete sentence, 10-24 words, shows speaking style and conversational intent",
       motivation: "1 complete sentence, 12-28 words, includes goal and stake/risk",
@@ -1255,7 +1535,7 @@ function buildFlavorPrompt(npc, options = {}) {
       "No generic filler like mysterious, strange, unusual, somehow.",
       "No duplicated appearance nouns (example: two scarf details).",
       "Keep tone grounded and playable for a live session.",
-      "Keep generated name close to culture; avoid joke names or modern slang.",
+      "Keep generated name close to culture; avoid joke names, contemporary real-world names, and modern slang.",
       "Use specific nouns (person, place, object, faction, ritual, debt, letter, relic, etc).",
       `Write every output text field in ${language.name}.`
     ],

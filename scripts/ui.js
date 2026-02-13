@@ -36,7 +36,9 @@ import {
   getOpenAiMaxBatch,
   buildManualEncounterNpcPrompt,
   buildManualFullNpcPrompt,
+  buildManualQuestBoardPrompt,
   generateFullNpcWithOpenAi,
+  generateQuestBoardWithOpenAi,
   generateNpcFlavorWithOpenAi,
   generateNpcTokenImageWithOpenAi,
   openOpenAiApiKeyDialog
@@ -619,6 +621,11 @@ export async function openNpcDialog() {
         callback: async (html) => {
           const form = html.find("form")[0];
           const formData = new FormData(form);
+          const mode = String(formData.get("encounterMode") || "main");
+          if (mode === "questboard") {
+            await createQuestBoardFromForm(html.find("form"));
+            return;
+          }
           await createNpcFromForm(formData);
         }
       },
@@ -627,6 +634,11 @@ export async function openNpcDialog() {
         callback: async (html) => {
           const form = html.find("form")[0];
           const formData = new FormData(form);
+          const mode = String(formData.get("encounterMode") || "main");
+          if (mode === "questboard") {
+            await createQuestBoardFromForm(html.find("form"));
+            return;
+          }
           await createNpcFromForm(formData, { aiFull: true });
         }
       },
@@ -637,13 +649,36 @@ export async function openNpcDialog() {
       const form = html.find("form");
       const tabButtons = form.find("[data-tab]");
       const tabPanels = form.find("[data-tab-panel]");
+      const questTabButton = form.find("[data-quest-tab-button]");
       const encounterModeInput = form.find("input[name='encounterMode']");
       const createButton = html.find("button[data-button='create']");
       const createAiButton = html.find("button[data-button='createAi']");
       const aiSection = form.find("[data-ai-section]");
+      const app = html.closest(".app.window-app.dialog");
       const dialogButtons = html.closest(".dialog").find(".dialog-buttons");
+      app.addClass("npc-btn-dialog-app");
       dialogButtons.addClass("npc-btn-dialog-buttons");
+      const viewportWidth = Math.max(
+        Number(globalThis?.window?.innerWidth) || 0,
+        Number(globalThis?.document?.documentElement?.clientWidth) || 0,
+        960
+      );
+      const preferredWidth = Math.max(640, Math.min(900, Math.floor(viewportWidth * 0.76)));
+      app.css({
+        width: `${preferredWidth}px`,
+        minWidth: "420px",
+        maxWidth: "94vw",
+        maxHeight: "90vh"
+      });
+      app.find(".window-content").css({ overflow: "hidden", padding: "0.35rem" });
       createAiButton.hide();
+      const showTab = (tab) => {
+        tabButtons.removeClass("active");
+        form.find(`[data-tab='${tab}']`).addClass("active");
+        tabPanels.hide();
+        form.find(`[data-tab-panel='${tab}']`).show();
+        encounterModeInput.val(tab);
+      };
       const updateCreateLabel = () => {
         const mode = String(encounterModeInput.val() || "main");
         if (mode === "encounter") {
@@ -658,6 +693,11 @@ export async function openNpcDialog() {
         }
         if (mode === "loot") {
           createButton.text(i18nText("ui.dialog.buttonCreateLoot"));
+          createAiButton.text(i18nText("ui.dialog.buttonCreateAiNpc"));
+          return;
+        }
+        if (mode === "questboard") {
+          createButton.text(i18nText("ui.dialog.buttonCreateQuestBoard"));
           createAiButton.text(i18nText("ui.dialog.buttonCreateAiNpc"));
           return;
         }
@@ -711,6 +751,14 @@ export async function openNpcDialog() {
         if (typeof lastOptions.lootUniqOnly === "boolean") {
           form.find("input[name='lootUniqOnly']").prop("checked", lastOptions.lootUniqOnly);
         }
+        if (lastOptions.questBoardCount) {
+          form.find("input[name='questBoardCount']").val(
+            Math.max(1, Math.min(20, Number(lastOptions.questBoardCount) || 3))
+          );
+        }
+        if (typeof lastOptions.questBoardPromptExtra === "string") {
+          form.find("textarea[name='questBoardPromptExtra']").val(lastOptions.questBoardPromptExtra);
+        }
         if (typeof lastOptions.includeLoot === "boolean") {
           form.find("input[name='includeLoot']").prop("checked", lastOptions.includeLoot);
         }
@@ -740,12 +788,8 @@ export async function openNpcDialog() {
         }
         if (lastOptions.encounterMode) {
           const mode = String(lastOptions.encounterMode);
-          if (["main", "encounter", "shop", "loot"].includes(mode)) {
-            tabButtons.removeClass("active");
-            form.find(`[data-tab='${mode}']`).addClass("active");
-            tabPanels.hide();
-            form.find(`[data-tab-panel='${mode}']`).show();
-            encounterModeInput.val(mode);
+          if (["main", "encounter", "shop", "loot", "questboard"].includes(mode)) {
+            showTab(mode);
           }
         }
       }
@@ -761,6 +805,8 @@ export async function openNpcDialog() {
       const aiNpcActions = form.find("[data-ai-npc-actions]");
       const aiShopActions = form.find("[data-ai-shop-actions]");
       const aiLootActions = form.find("[data-ai-loot-actions]");
+      const aiQuestActions = form.find("[data-ai-quest-actions]");
+      const questGenerateButton = form.find("[data-action='quest-generate-board']");
       const aiNpcOptions = form.find("[data-ai-npc-options]");
       const aiNpcNotes = form.find("[data-ai-npc-note]");
       const includeAiFlavorInput = form.find("input[name='includeAiFlavor']");
@@ -795,6 +841,8 @@ export async function openNpcDialog() {
         lootAllowMagic: readChecked("lootAllowMagic"),
         lootIncludeCoins: readChecked("lootIncludeCoins"),
         lootUniqOnly: readChecked("lootUniqOnly"),
+        questBoardCount: Math.max(1, Math.min(20, Number(form.find("input[name='questBoardCount']").val()) || 3)),
+        questBoardPromptExtra: String(form.find("textarea[name='questBoardPromptExtra']").val() || "").trim(),
         useAi: !!useAiToggle.prop("checked"),
         includeLoot: readChecked("includeLoot"),
         includeSecret: readChecked("includeSecret"),
@@ -815,11 +863,7 @@ export async function openNpcDialog() {
       };
       tabButtons.on("click", (ev) => {
         const tab = ev.currentTarget.getAttribute("data-tab");
-        tabButtons.removeClass("active");
-        $(ev.currentTarget).addClass("active");
-        tabPanels.hide();
-        form.find(`[data-tab-panel='${tab}']`).show();
-        encounterModeInput.val(tab);
+        showTab(tab);
         if (tab === "encounter") refreshEncounterCount();
         updateCreateLabel();
         updateAiUi();
@@ -939,21 +983,88 @@ export async function openNpcDialog() {
           }
         });
       });
+      form.find("[data-action='quest-copy-prompt']").on("click", async () => {
+        const promptText = buildManualQuestBoardPrompt(collectQuestBoardPromptContext(form));
+        const copied = await copyTextToClipboard(promptText);
+        if (copied) {
+          ui.notifications?.info(i18nText("ui.quest.infoPromptCopied"));
+          return;
+        }
+        new Dialog({
+          title: i18nText("ui.dialog.questPromptTitle"),
+          content: `
+            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+              <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+                ${i18nHtml("ui.dialog.questPromptNote")}
+              </p>
+              <textarea style="width:100%;min-height:18rem;" readonly>${escapeHtml(promptText)}</textarea>
+            </div>
+          `,
+          buttons: {
+            close: { label: i18nText("common.close") }
+          },
+          default: "close"
+        }).render(true);
+      });
+      form.find("[data-action='quest-import-json']").on("click", () => {
+        openImportQuestBoardJsonDialog({
+          onImport: async (payload) => {
+            const normalized = normalizeImportedQuestBoardPayload(payload, collectQuestBoardPromptContext(form));
+            if (!normalized) {
+              throw new Error(i18nText("ui.quest.errorImportInvalidShape"));
+            }
+            const journal = await createQuestBoardJournal(normalized);
+            if (journal) {
+              ui.notifications?.info(
+                i18nFormat("ui.quest.infoBoardCreated", {
+                  name: journal.name || i18nText("common.unnamed"),
+                  count: normalized.quests.length
+                })
+              );
+            }
+          }
+        });
+      });
+      form.find("[data-action='quest-generate-board']").on("click", async () => {
+        await createQuestBoardFromForm(form);
+      });
       const updateAiUi = () => {
-        const mode = String(encounterModeInput.val() || "main");
+        let mode = String(encounterModeInput.val() || "main");
         const useAi = !!useAiToggle.prop("checked");
-        const shopMode = mode === "shop";
-        const lootMode = mode === "loot";
-        const nonNpcMode = shopMode || lootMode;
-        aiSection.css("display", "flex");
-        aiControls.css("display", useAi ? "flex" : "none");
+        let shopMode = mode === "shop";
+        let lootMode = mode === "loot";
+        let questMode = mode === "questboard";
+        let nonNpcMode = shopMode || lootMode;
+        const questTabVisible = useAi;
+        questTabButton.css("display", questTabVisible ? "block" : "none");
+        if (!questTabVisible && questMode) {
+          showTab("main");
+          mode = "main";
+          shopMode = false;
+          lootMode = false;
+          questMode = false;
+          nonNpcMode = false;
+          updateCreateLabel();
+        }
+
+        aiSection.css("display", questMode ? "none" : "flex");
+        aiControls.css("display", useAi && !questMode ? "flex" : "none");
         aiNpcActions.css("display", nonNpcMode ? "none" : "grid");
         aiShopActions.css("display", shopMode ? "grid" : "none");
         aiLootActions.css("display", lootMode ? "grid" : "none");
+        aiQuestActions.css("display", useAi && questMode ? "flex" : "none");
+        questGenerateButton.css("display", useAi && questMode ? "block" : "none");
         aiNpcOptions.css("display", nonNpcMode ? "none" : "grid");
         aiNpcNotes.css("display", nonNpcMode ? "none" : "block");
-        createAiButton.toggle(useAi && !nonNpcMode);
-        if (nonNpcMode) {
+        createAiButton.toggle(useAi && !nonNpcMode && !questMode);
+        if (useAi && questMode && !aiReady) {
+          questGenerateButton.prop("disabled", true);
+          questGenerateButton.attr("title", i18nText("ui.dialog.setApiKeyFirstTitle"));
+        } else {
+          questGenerateButton.prop("disabled", false);
+          questGenerateButton.attr("title", "");
+        }
+        if (nonNpcMode || questMode) {
           createAiButton.hide();
           createAiButton.prop("disabled", true);
           createAiButton.attr("title", "");
@@ -1034,7 +1145,9 @@ export async function openNpcDialog() {
           "input[name='shopAllowMagic']",
           "input[name='lootAllowMagic']",
           "input[name='lootIncludeCoins']",
-          "input[name='lootUniqOnly']"
+          "input[name='lootUniqOnly']",
+          "input[name='questBoardCount']",
+          "textarea[name='questBoardPromptExtra']"
         ].join(", "),
         persistDialogOptions
       );
@@ -2848,6 +2961,7 @@ function buildManualShopPrompt(context = {}) {
     "Rules:",
     "- \"shopType\" must be one of: market, general, alchemy, scrolls, weapons, armor, food.",
     "- \"shopBudget\" must be one of: poor, normal, well, elite.",
+    "- \"shopName\" must be a high-fantasy in-world name; avoid modern real-world personal or business names.",
     "- \"items\" must be an array of objects.",
     "- \"lookup\" is mandatory and should be English canonical D&D item name.",
     "- Write \"name\" in interface language when possible.",
@@ -2940,6 +3054,508 @@ function buildManualLootPrompt(context = {}) {
     `- Unique items only: ${uniqOnly ? "yes" : "no"}`,
     `- Interface language: ${language} (${languageCode})`
   ].join("\n");
+}
+
+function collectQuestBoardPromptContext(form) {
+  const count = clampRangeValue(form.find("input[name='questBoardCount']").val(), 1, 20, 3);
+  const partyLevel = clampRangeValue(form.find("input[name='partyLevel']").val(), 1, 20, 3);
+  const partySize = clampRangeValue(form.find("input[name='partySize']").val(), 1, 8, 4);
+  const difficulty = String(form.find("select[name='encounterDifficulty']").val() || "medium");
+  const tierInput = String(form.find("select[name='tier']").val() || "auto");
+  const tier = tierInput === "auto" ? getAutoTier() : clampRangeValue(tierInput, 1, 4, 1);
+  const budget = normalizeBudgetOption(form.find("select[name='budget']").val());
+  const cultureRaw = String(form.find("select[name='culture']").val() || "random");
+  const culture = cultureRaw === "random" ? "" : cultureRaw;
+  const mode = String(form.find("input[name='encounterMode']").val() || "main");
+  const customInstruction = String(form.find("textarea[name='questBoardPromptExtra']").val() || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 800);
+  const langCode = String(game?.i18n?.lang || "en").trim() || "en";
+  const langName = langCode.startsWith("ru") ? "Russian" : langCode.startsWith("en") ? "English" : langCode;
+
+  return {
+    count,
+    partyLevel,
+    partySize,
+    difficulty,
+    tier,
+    budget,
+    culture,
+    mode,
+    location: culture || "",
+    tone: mode === "encounter" ? "combat-forward" : mode === "shop" ? "social and trade" : "adventure-ready",
+    boardTitle: "",
+    customInstruction,
+    language: { code: langCode, name: langName }
+  };
+}
+
+async function createQuestBoardFromForm(form) {
+  const formRef = form?.length ? form : $(form);
+  const useAi = !!formRef.find("input[name='useAi']").prop("checked");
+  if (!useAi) {
+    ui.notifications?.warn(i18nText("ui.warnEnableUseAiFirst"));
+    return null;
+  }
+  const aiReady = isOpenAiConfigured();
+  if (!aiReady) {
+    ui.notifications?.warn(i18nText("ui.quest.warnApiUnavailableUsePrompt"));
+    return null;
+  }
+
+  const context = collectQuestBoardPromptContext(formRef);
+  const generationProgress = createProgressReporter({
+    label: i18nText("ui.quest.progressGenerating"),
+    total: 3
+  });
+
+  try {
+    generationProgress.tick();
+    const generated = await generateQuestBoardWithOpenAi(context);
+    generationProgress.tick();
+    const normalized = normalizeImportedQuestBoardPayload(generated, context);
+    if (!normalized) {
+      throw new Error(i18nText("ui.quest.errorImportInvalidShape"));
+    }
+    const journal = await createQuestBoardJournal(normalized);
+    generationProgress.finish();
+    if (journal) {
+      ui.notifications?.info(
+        i18nFormat("ui.quest.infoBoardCreated", {
+          name: journal.name || i18nText("common.unnamed"),
+          count: normalized.quests.length
+        })
+      );
+    }
+    return journal;
+  } catch (err) {
+    generationProgress.finish();
+    console.error("NPC Button: Failed to generate quest board via OpenAI.", err);
+    const reason = String(err?.message || "").trim();
+    ui.notifications?.error(
+      reason
+        ? i18nFormat("ui.quest.errorGenerateFailedWithReason", { reason })
+        : i18nText("ui.quest.errorGenerateFailed")
+    );
+    return null;
+  }
+}
+
+function openImportQuestBoardJsonDialog({ onImport }) {
+  new Dialog({
+    title: i18nText("ui.dialog.questImportTitle"),
+    content: `
+      <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <p style="margin:0;font-size:0.85rem;opacity:0.85;">
+          ${i18nHtml("ui.dialog.questImportDescription")}
+        </p>
+        <textarea name="questBoardJson" style="width:100%;min-height:18rem;" placeholder='${i18nHtml("ui.dialog.questImportPlaceholder")}'></textarea>
+      </div>
+    `,
+    buttons: {
+      import: {
+        label: i18nText("ui.dialog.questImportJson"),
+        callback: async (html) => {
+          const rawJson = String(html.find("textarea[name='questBoardJson']").val() || "").trim();
+          if (!rawJson) {
+            ui.notifications?.warn(i18nText("ui.quest.warnPasteJsonFirst"));
+            return;
+          }
+          try {
+            const parsed = parseLooseJsonObject(rawJson);
+            if (typeof onImport === "function") {
+              await onImport(parsed);
+            }
+          } catch (err) {
+            console.error("NPC Button: Failed to import quest board JSON.", err);
+            const reason = String(err?.message || "").trim();
+            ui.notifications?.error(
+              reason
+                ? i18nFormat("ui.quest.errorImportFailedWithReason", { reason })
+                : i18nText("ui.quest.errorImportFailed")
+            );
+          }
+        }
+      },
+      cancel: { label: i18nText("common.cancel") }
+    },
+    default: "import"
+  }).render(true);
+}
+
+function normalizeImportedQuestBoardPayload(parsed, context = {}) {
+  if (parsed === null || parsed === undefined) return null;
+
+  const source = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed
+    : {};
+  const nestedBoard = source.board && typeof source.board === "object" ? source.board : {};
+  const questArray = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(source.quests)
+      ? source.quests
+      : Array.isArray(nestedBoard.quests)
+        ? nestedBoard.quests
+        : Array.isArray(source.items)
+          ? source.items
+          : [];
+
+  const defaultCount = clampRangeValue(
+    context.count,
+    1,
+    20,
+    Math.max(1, Math.min(20, questArray.length || 3))
+  );
+  const requestedCount = clampRangeValue(
+    source.count ?? source.questCount ?? source.total ?? defaultCount,
+    1,
+    20,
+    defaultCount
+  );
+  const quests = [];
+  for (let index = 0; index < questArray.length; index++) {
+    const normalized = normalizeImportedQuestEntry(questArray[index], index + 1);
+    if (!normalized) continue;
+    quests.push(normalized);
+    if (quests.length >= requestedCount) break;
+  }
+  if (!quests.length) return null;
+
+  const boardTitle = String(
+    source.boardTitle ||
+    source.title ||
+    nestedBoard.boardTitle ||
+    nestedBoard.title ||
+    i18nFormat("ui.quest.boardDefaultTitle", { count: quests.length }, `Quest Board (${quests.length})`)
+  ).trim();
+  const boardSummary = questEnsureSentence(
+    String(
+      source.boardSummary ||
+      source.summary ||
+      nestedBoard.boardSummary ||
+      nestedBoard.summary ||
+      ""
+    ).trim()
+  );
+
+  return {
+    boardTitle: boardTitle || i18nText("ui.quest.boardFallbackTitle", "Quest Board"),
+    boardSummary: boardSummary || i18nText(
+      "ui.quest.boardFallbackSummary",
+      "The board offers leads with clear risks, tasks, and rewards for capable adventurers."
+    ),
+    partyLevel: clampRangeValue(source.partyLevel ?? context.partyLevel, 1, 20, 3),
+    partySize: clampRangeValue(source.partySize ?? context.partySize, 1, 8, 4),
+    difficulty: String(source.difficulty || context.difficulty || "medium").trim() || "medium",
+    quests
+  };
+}
+
+function normalizeImportedQuestEntry(entry, index = 1) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const title = String(entry.title || entry.name || entry.questTitle || "").trim();
+  const who = String(entry.who || entry.patron || entry.questGiver || entry.client || "").trim();
+  const what = String(entry.what || entry.objective || entry.goal || entry.problem || "").trim();
+  const tasks = normalizeQuestStringArray(entry.tasks || entry.steps || entry.objectives || entry.checklist, 5);
+  const twists = normalizeQuestStringArray(entry.twists || entry.complications || entry.turns || entry.secrets, 3);
+  const gmDescription = String(entry.gmDescription || entry.gmNotes || entry.notesForGM || entry.description || "").trim();
+  const reward = normalizeImportedQuestReward(entry.reward, entry);
+
+  return {
+    title: title || i18nFormat("ui.quest.questDefaultTitle", { index }, `Quest #${index}`),
+    who: questEnsureSentence(who) || i18nText("ui.quest.questFallbackWho", "A local patron requests help from proven adventurers."),
+    what: questEnsureSentence(what) || i18nText("ui.quest.questFallbackWhat", "Resolve the core threat before it harms the settlement."),
+    tasks: tasks.length
+      ? tasks
+      : [
+          i18nText("ui.quest.questFallbackTask1", "Gather clues and identify the true source of the problem."),
+          i18nText("ui.quest.questFallbackTask2", "Reach the key location and confront active opposition."),
+          i18nText("ui.quest.questFallbackTask3", "Secure proof of resolution and report back.")
+        ],
+    reward,
+    gmDescription: questEnsureSentence(gmDescription) || i18nText(
+      "ui.quest.questFallbackGmDescription",
+      "Escalate pressure with a clock, conflicting NPC motives, and one reversible setback."
+    ),
+    twists: twists.length
+      ? twists
+      : [i18nText("ui.quest.questFallbackTwist", "A trusted ally is withholding a critical piece of truth.")]
+  };
+}
+
+function normalizeImportedQuestReward(rawReward, entrySource = {}) {
+  const rewardObj = rawReward && typeof rawReward === "object" && !Array.isArray(rawReward) ? rawReward : {};
+  const summary = questEnsureSentence(
+    String(rewardObj.summary || entrySource.rewardSummary || entrySource.reward || "").trim()
+  );
+  const gold = clampRangeValue(
+    rewardObj.gold ?? rewardObj.goldGp ?? entrySource.rewardGold ?? entrySource.gold,
+    0,
+    500000,
+    0
+  );
+  const items = normalizeQuestStringArray(rewardObj.items || entrySource.rewardItems || entrySource.items, 6);
+
+  return {
+    summary: summary || i18nText("ui.quest.rewardFallbackSummary", "Coin, practical supplies, and local goodwill."),
+    gold,
+    items
+  };
+}
+
+function normalizeQuestStringArray(value, maxItems = 5) {
+  const list = Array.isArray(value)
+    ? value
+    : String(value || "")
+      .split(/[\r\n,;]+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  const out = [];
+  for (const entry of list) {
+    const clean = String(entry || "").replace(/\s+/g, " ").trim();
+    if (!clean) continue;
+    out.push(clean.slice(0, 220));
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+function questEnsureSentence(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  if (/[.!?]$/.test(text)) return text;
+  return `${text}.`;
+}
+
+async function createQuestBoardJournal(boardPayload) {
+  const alreadyNormalized =
+    boardPayload &&
+    typeof boardPayload === "object" &&
+    !Array.isArray(boardPayload) &&
+    Array.isArray(boardPayload.quests) &&
+    boardPayload.quests.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+  const normalized = alreadyNormalized
+    ? boardPayload
+    : normalizeImportedQuestBoardPayload(boardPayload);
+  if (!normalized?.quests?.length) {
+    throw new Error(i18nText("ui.quest.errorImportInvalidShape"));
+  }
+
+  const folderId = await ensureQuestBoardJournalFolder();
+  const htmlContent = buildQuestBoardJournalHtml(normalized);
+  const name = String(normalized.boardTitle || "").trim() || i18nText("ui.quest.boardFallbackTitle", "Quest Board");
+  const pageName = i18nText("ui.quest.pageName", "Quest Board");
+  const flags = {
+    [MODULE_ID]: {
+      questBoard: true,
+      questCount: normalized.quests.length
+    }
+  };
+
+  let journal = null;
+  try {
+    journal = await JournalEntry.create({
+      name,
+      folder: folderId || null,
+      flags,
+      pages: [
+        {
+          name: pageName,
+          type: "text",
+          text: { format: 1, content: htmlContent }
+        }
+      ]
+    });
+  } catch {
+    journal = await JournalEntry.create({
+      name,
+      folder: folderId || null,
+      flags,
+      content: htmlContent
+    });
+  }
+
+  if (journal?.sheet?.render) {
+    journal.sheet.render(true);
+  }
+  return journal;
+}
+
+async function ensureQuestBoardJournalFolder() {
+  const existingFlagged = (game.folders || []).find(
+    (folder) => folder.type === "JournalEntry" && folder.flags?.[MODULE_ID]?.questBoardFolder
+  );
+  if (existingFlagged) return existingFlagged.id;
+
+  const folderName = i18nText("ui.quest.folderPrefix", "Quest Boards");
+  const existingByName = (game.folders || []).find(
+    (folder) => folder.type === "JournalEntry" && String(folder.name || "").trim() === folderName
+  );
+  if (existingByName) {
+    await existingByName.update({
+      flags: {
+        ...(existingByName.flags || {}),
+        [MODULE_ID]: {
+          ...(existingByName.flags?.[MODULE_ID] || {}),
+          questBoardFolder: true
+        }
+      }
+    });
+    return existingByName.id;
+  }
+
+  const created = await Folder.create({
+    name: folderName,
+    type: "JournalEntry",
+    flags: {
+      [MODULE_ID]: {
+        questBoardFolder: true
+      }
+    }
+  });
+  return created?.id || null;
+}
+
+function buildQuestBoardJournalHtml(board) {
+  const summary = String(board?.boardSummary || "").trim();
+  const partyLevel = Number(board?.partyLevel || 0);
+  const partySize = Number(board?.partySize || 0);
+  const difficulty = String(board?.difficulty || "").trim();
+  const quests = Array.isArray(board?.quests) ? board.quests : [];
+
+  const cards = quests.map((quest, index) => {
+    const taskItems = (quest.tasks || [])
+      .map((task) => `<li>${escapeHtml(task)}</li>`)
+      .join("");
+    const twistItems = (quest.twists || [])
+      .map((twist) => `<li>${escapeHtml(twist)}</li>`)
+      .join("");
+    const rewardItems = (quest.reward?.items || [])
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .join("");
+    const rewardGold = Number(quest.reward?.gold || 0);
+    return `
+      <article class="npc-btn-quest-board__card">
+        <header class="npc-btn-quest-board__card-head">
+          <h2>${index + 1}. ${escapeHtml(quest.title || i18nText("ui.quest.boardQuestUntitled", "Untitled quest"))}</h2>
+        </header>
+        <section>
+          <h3>${escapeHtml(i18nText("ui.quest.labelWho", "Who"))}</h3>
+          <p>${escapeHtml(quest.who || "-")}</p>
+        </section>
+        <section>
+          <h3>${escapeHtml(i18nText("ui.quest.labelWhat", "What"))}</h3>
+          <p>${escapeHtml(quest.what || "-")}</p>
+        </section>
+        <section>
+          <h3>${escapeHtml(i18nText("ui.quest.labelTasks", "Tasks"))}</h3>
+          <ol>${taskItems || `<li>${escapeHtml(i18nText("ui.quest.emptyTasks", "No tasks listed."))}</li>`}</ol>
+        </section>
+        <section>
+          <h3>${escapeHtml(i18nText("ui.quest.labelReward", "Reward"))}</h3>
+          <p>${escapeHtml(quest.reward?.summary || "-")}</p>
+          <p><strong>${escapeHtml(i18nText("ui.quest.labelRewardGold", "Gold"))}:</strong> ${escapeHtml(String(rewardGold))} gp</p>
+          ${rewardItems ? `<ul>${rewardItems}</ul>` : ""}
+        </section>
+        <section>
+          <h3>${escapeHtml(i18nText("ui.quest.labelGm", "GM Notes"))}</h3>
+          <p>${escapeHtml(quest.gmDescription || "-")}</p>
+        </section>
+        <section>
+          <h3>${escapeHtml(i18nText("ui.quest.labelTwists", "Twists"))}</h3>
+          <ul>${twistItems || `<li>${escapeHtml(i18nText("ui.quest.emptyTwists", "No twists listed."))}</li>`}</ul>
+        </section>
+      </article>
+    `;
+  }).join("");
+
+  return `
+    <style>
+      .npc-btn-quest-board {
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+        color: #1f2532;
+      }
+      .npc-btn-quest-board__header {
+        border: 1px solid #c8d3ea;
+        border-radius: 10px;
+        padding: 0.8rem 0.9rem;
+        background: linear-gradient(165deg, #f7faff, #edf3ff);
+      }
+      .npc-btn-quest-board__header h1 {
+        margin: 0 0 0.35rem 0;
+        font-size: 1.2rem;
+        line-height: 1.25;
+      }
+      .npc-btn-quest-board__meta {
+        margin: 0;
+        font-size: 0.9rem;
+        opacity: 0.9;
+      }
+      .npc-btn-quest-board__summary {
+        margin: 0.5rem 0 0;
+        font-size: 0.95rem;
+      }
+      .npc-btn-quest-board__grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 0.75rem;
+      }
+      .npc-btn-quest-board__card {
+        border: 1px solid #cfd8ec;
+        border-radius: 10px;
+        padding: 0.7rem 0.8rem;
+        background: #ffffff;
+        box-shadow: 0 1px 4px rgba(25, 35, 55, 0.08);
+      }
+      .npc-btn-quest-board__card-head h2 {
+        margin: 0 0 0.45rem 0;
+        font-size: 1rem;
+        line-height: 1.25;
+      }
+      .npc-btn-quest-board__card section {
+        margin: 0.45rem 0;
+      }
+      .npc-btn-quest-board__card h3 {
+        margin: 0 0 0.2rem 0;
+        font-size: 0.83rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        opacity: 0.82;
+      }
+      .npc-btn-quest-board__card p,
+      .npc-btn-quest-board__card li {
+        margin: 0;
+        font-size: 0.9rem;
+        line-height: 1.35;
+      }
+      .npc-btn-quest-board__card ul,
+      .npc-btn-quest-board__card ol {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+    </style>
+    <section class="npc-btn-quest-board">
+      <header class="npc-btn-quest-board__header">
+        <h1>${escapeHtml(String(board.boardTitle || i18nText("ui.quest.boardFallbackTitle", "Quest Board")))}</h1>
+        <p class="npc-btn-quest-board__meta">
+          ${escapeHtml(i18nFormat("ui.quest.boardMeta", {
+            count: quests.length,
+            level: partyLevel || 0,
+            size: partySize || 0,
+            difficulty: difficulty || "-"
+          }, `Quests: ${quests.length} | Party: L${partyLevel || 0} x${partySize || 0} | Difficulty: ${difficulty || "-"}`))}
+        </p>
+        ${summary ? `<p class="npc-btn-quest-board__summary">${escapeHtml(summary)}</p>` : ""}
+      </header>
+      <div class="npc-btn-quest-board__grid">
+        ${cards}
+      </div>
+    </section>
+  `;
 }
 
 function openImportShopJsonDialog({ onImport }) {

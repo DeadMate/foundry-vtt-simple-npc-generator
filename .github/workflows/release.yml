@@ -41,7 +41,7 @@ jobs:
         id: bump
         if: steps.changes.outputs.changed == 'true'
         run: |
-          node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} parts[2]+=1; const next=parts.join('.'); data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2));"
+          node -e "const fs=require('fs'); const path='module.json'; const data=JSON.parse(fs.readFileSync(path,'utf8')); const parts=data.version.split('.').map(n=>parseInt(n,10)); if(parts.length!==3||parts.some(n=>Number.isNaN(n))){throw new Error('Invalid version');} let next=''; if(parts[0]===0){ next='1.0.0'; } else { parts[2]+=1; next=parts.join('.'); } data.version=next; fs.writeFileSync(path, JSON.stringify(data,null,2));"
           VERSION=$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('module.json','utf8')); console.log(data.version);")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
