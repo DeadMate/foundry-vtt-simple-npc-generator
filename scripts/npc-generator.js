@@ -402,7 +402,7 @@ export async function buildActorData(npc, folderId = null) {
     abilityData[key] = { value };
   }
 
-  const skillsData = buildSkillsData(npc.archetype.skills);
+  const skillsData = buildSkillsData(npc.archetype.skills, npc.className);
 
   const items = [];
   const weaponItem = await buildWeaponItem(npc);
@@ -414,6 +414,9 @@ export async function buildActorData(npc, folderId = null) {
 
   // Combat features: Multiattack, Legendary Actions, Legendary Resistance
   items.push(...(await buildCombatFeatureItems(npc)));
+
+  // Iconic class bonus action / signature features from compendium
+  items.push(...(await buildClassBonusActionFeatures(npc)));
 
   if (npc.loot) {
     const lootItems = [];
@@ -435,6 +438,7 @@ export async function buildActorData(npc, folderId = null) {
 
   // Saving throw proficiencies by class
   const saveProficiencies = getSavingThrowProficiencies(npc.className);
+  const spellcastingAbility = getSpellcastingAbility(npc.className);
 
   const actorData = {
     name: npc.name,
@@ -454,7 +458,8 @@ export async function buildActorData(npc, folderId = null) {
         ac: { value: npc.ac },
         hp: { value: npc.hp, max: npc.hp, temp: 0 },
         movement: { walk: npc.speed },
-        prof: npc.prof
+        prof: npc.prof,
+        spellcasting: spellcastingAbility || ""
       },
       bonuses: {
         mwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
@@ -508,6 +513,9 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
   // Combat features: Multiattack, Legendary Actions, Legendary Resistance
   items.push(...(await buildCombatFeatureItems(npc)));
 
+  // Iconic class bonus action / signature features from compendium
+  items.push(...(await buildClassBonusActionFeatures(npc)));
+
   normalizeArmorItems(items);
 
   const biography = buildBiography(npc);
@@ -524,7 +532,7 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
   for (const [key, value] of Object.entries(npc.abilities || {})) {
     abilityData[key] = { value: Number(value) || 10 };
   }
-  const skillsData = buildSkillsData(npc.skillIds || npc.archetype.skills || []);
+  const skillsData = buildSkillsData(npc.skillIds || npc.archetype.skills || [], npc.className);
 
   const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
 
@@ -537,6 +545,7 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
 
   const className = npc.className || "Fighter";
   const saveProficiencies = getSavingThrowProficiencies(className);
+  const spellcastingAbility = getSpellcastingAbility(className);
 
   const actorData = {
     name: npc.name,
@@ -556,7 +565,8 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
         ac: { value: npc.ac },
         hp: { value: npc.hp, max: npc.hp, temp: 0 },
         movement: { walk: npc.speed },
-        prof: npc.prof
+        prof: npc.prof,
+        spellcasting: spellcastingAbility || ""
       },
       bonuses: {
         mwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
@@ -591,13 +601,41 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
   return { actorData, resolvedItems, missingItems, matchDetails };
 }
 
+const KNOWN_CLASS_NAMES = {
+  barbarian: "Barbarian",
+  bard: "Bard",
+  cleric: "Cleric",
+  druid: "Druid",
+  fighter: "Fighter",
+  monk: "Monk",
+  paladin: "Paladin",
+  ranger: "Ranger",
+  rogue: "Rogue",
+  sorcerer: "Sorcerer",
+  warlock: "Warlock",
+  wizard: "Wizard"
+};
+
+/**
+ * Normalize class names to canonical PHB casing used by lookup logic.
+ * Preserves unknown/custom class names as-is.
+ * @param {string} className - Raw class name
+ * @param {string} [fallback="Fighter"] - Fallback when class name is empty
+ * @returns {string}
+ */
+export function normalizeClassName(className, fallback = "Fighter") {
+  const raw = String(className || "").trim();
+  if (!raw) return fallback;
+  return KNOWN_CLASS_NAMES[raw.toLowerCase()] || raw;
+}
+
 function normalizeAiBlueprintForActor(blueprint) {
   const source = blueprint && typeof blueprint === "object" ? blueprint : {};
   const tier = clampRange(source.tier, 1, 4, 1);
   const attackStyle = normalizeAttackStyle(source.attackStyle);
   const skillIds = normalizeSkillIdsForActor(source.skillIds || source.skills);
   const tags = normalizeTagListForActor(source.archetypeTags || source.tags, attackStyle);
-  const className = String(source.className || source.class || getClassForArchetype({ tags }) || "Fighter").trim() || "Fighter";
+  const className = normalizeClassName(source.className || source.class || getClassForArchetype({ tags }), "Fighter");
   const archetypeName =
     String(source.archetypeName || source.archetype?.name || `${className} Operative`).trim() ||
     `${className} Operative`;
@@ -1667,11 +1705,13 @@ export function buildBiography(npc) {
 }
 
 /**
- * Build skills data
+ * Build skills data with optional expertise for Rogue/Bard.
+ * Proficiency values: 0 = not proficient, 1 = proficient, 2 = expertise.
  * @param {string[]} skillIds - Skill IDs with proficiency
+ * @param {string} [className] - Class name (used for expertise assignment)
  * @returns {Object}
  */
-export function buildSkillsData(skillIds) {
+export function buildSkillsData(skillIds, className) {
   const data = {};
   const skillConfig = CONFIG?.DND5E?.skills ?? {};
   for (const key of Object.keys(skillConfig)) {
@@ -1680,10 +1720,65 @@ export function buildSkillsData(skillIds) {
   skillIds.forEach((skill) => {
     if (data[skill]) data[skill].value = 1;
   });
+
+  // Apply expertise (value 2) for Rogue and Bard — 2 skills get expertise
+  const expertiseSkills = getExpertiseSkills(className, skillIds);
+  for (const skill of expertiseSkills) {
+    if (data[skill]) data[skill].value = 2;
+  }
+
   return data;
 }
 
+/**
+ * Get expertise skill picks for a class.
+ * Rogues get expertise in Stealth + one of (Sleight of Hand, Perception, Deception).
+ * Bards get expertise in Persuasion + one of (Deception, Performance, Insight).
+ * Only skills the NPC is already proficient in can receive expertise.
+ * @param {string} className - Class name
+ * @param {string[]} proficientSkills - Skills the NPC already has proficiency in
+ * @returns {string[]} Array of skill IDs that should have expertise
+ */
+export function getExpertiseSkills(className, proficientSkills) {
+  const cls = normalizeClassName(className, "");
+  const profSet = new Set(proficientSkills || []);
+  if (cls !== "Rogue" && cls !== "Bard") return [];
+
+  if (cls === "Rogue") {
+    const fixed = profSet.has("ste") ? ["ste"] : [];
+    const pool = ["slt", "prc", "dec"].filter((s) => profSet.has(s) && !fixed.includes(s));
+    if (pool.length) fixed.push(pickRandom(pool));
+    return fixed;
+  }
+
+  // Bard
+  const fixed = profSet.has("per") ? ["per"] : [];
+  const pool = ["dec", "prf", "ins"].filter((s) => profSet.has(s) && !fixed.includes(s));
+  if (pool.length) fixed.push(pickRandom(pool));
+  return fixed;
+}
+
 // ========== Saving Throws & Spell Slots ==========
+
+/**
+ * Get the spellcasting ability for a given class.
+ * Based on PHB spellcasting ability by class.
+ * @param {string} className - Class name
+ * @returns {string|null} Ability key (e.g. "int", "wis", "cha") or null for non-casters
+ */
+export function getSpellcastingAbility(className) {
+  switch (normalizeClassName(className, "")) {
+    case "Wizard":     return "int";
+    case "Cleric":     return "wis";
+    case "Druid":      return "wis";
+    case "Ranger":     return "wis";
+    case "Bard":       return "cha";
+    case "Sorcerer":   return "cha";
+    case "Warlock":    return "cha";
+    case "Paladin":    return "cha";
+    default:           return null;
+  }
+}
 
 /**
  * Get saving throw proficiency abilities for a given class.
@@ -1692,7 +1787,7 @@ export function buildSkillsData(skillIds) {
  * @returns {string[]} Array of ability keys (e.g. ["str", "con"])
  */
 export function getSavingThrowProficiencies(className) {
-  switch (String(className || "").trim()) {
+  switch (normalizeClassName(className, "")) {
     case "Fighter":   return ["str", "con"];
     case "Barbarian":  return ["str", "con"];
     case "Paladin":    return ["wis", "cha"];
@@ -1896,6 +1991,40 @@ export async function buildCombatFeatureItems(npc) {
   }
 
   return items;
+}
+
+/**
+ * Mapping of class names to their iconic bonus action / class features.
+ * Each entry has a compendiumLookup key and a canonical English name.
+ * New locales add their own names via lang file: compendiumLookup.<key>.
+ */
+const CLASS_BONUS_FEATURES = {
+  Rogue:     { lookupKey: "cunningAction",  canonical: "Cunning Action" },
+  Monk:      { lookupKey: "flurryOfBlows",  canonical: "Flurry of Blows" },
+  Fighter:   { lookupKey: "secondWind",     canonical: "Second Wind" },
+  Barbarian: { lookupKey: "recklessAttack", canonical: "Reckless Attack" },
+  Paladin:   { lookupKey: "divineSmite",    canonical: "Divine Smite" },
+  Ranger:    { lookupKey: "huntersMark",    canonical: "Hunter's Mark" }
+};
+
+/**
+ * Build iconic class bonus-action / signature features from compendium.
+ * Uses the same locale-aware findCombatFeatureDoc pattern.
+ * Only adds a feature if it is found in the compendium — no hardcoded fallback.
+ * @param {Object} npc - NPC data
+ * @returns {Promise<Object[]>} Array of feature item data objects
+ */
+export async function buildClassBonusActionFeatures(npc) {
+  const className = normalizeClassName(npc?.className, "");
+  const mapping = CLASS_BONUS_FEATURES[className];
+  if (!mapping) return [];
+
+  const featurePacks = getPacks("classFeatures").concat(getPacks("features"));
+  const doc = findCombatFeatureDoc(featurePacks, mapping.lookupKey, mapping.canonical);
+  if (!doc) return [];
+
+  const item = cloneItemData(doc);
+  return [ensureActivities(item)];
 }
 
 // ========== Weapon Building ==========

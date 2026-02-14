@@ -52,7 +52,13 @@
     "compendiumLookup": {
       "multiattack": "Мультиатака|Multiattack",
       "legendaryResistance": "Легендарное сопротивление|Легендарное сопротивление (3/день)|Legendary Resistance|Legendary Resistance (3/Day)",
-      "legendaryActions": "Легендарные действия|Legendary Actions"
+      "legendaryActions": "Легендарные действия|Legendary Actions",
+      "cunningAction": "Хитрое действие|Cunning Action",
+      "flurryOfBlows": "Шквал ударов|Flurry of Blows",
+      "secondWind": "Второе дыхание|Second Wind",
+      "recklessAttack": "Безрассудная атака|Reckless Attack",
+      "divineSmite": "Божественная кара|Divine Smite",
+      "huntersMark": "Метка охотника|Hunter's Mark"
     },
     "archetypes": {
       "guard": "Стражник",

@@ -1,7 +1,10 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Add class signature/bonus-action feature lookup from compendiums for Rogue, Monk, Fighter, Barbarian, Paladin, and Ranger (with locale-aware name matching).
+- Add localized compendium lookup aliases (EN/RU) for Cunning Action, Flurry of Blows, Second Wind, Reckless Attack, Divine Smite, and Hunter's Mark.
+- Improve generated actor skill data by applying expertise (value `2`) to eligible Rogue and Bard skills when proficiency exists.
+- Set NPC `system.attributes.spellcasting` from class defaults (INT/WIS/CHA) so caster classes are initialized with the correct spellcasting ability.
 
 ## 1.0.2
 - NPC stats (HP, AC, proficiency) now scale from the DMG Monster Statistics by CR table instead of flat linear formulas — NPCs at every tier feel appropriately tough.

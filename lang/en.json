@@ -52,7 +52,13 @@
     "compendiumLookup": {
       "multiattack": "Multiattack",
       "legendaryResistance": "Legendary Resistance|Legendary Resistance (3/Day)",
-      "legendaryActions": "Legendary Actions"
+      "legendaryActions": "Legendary Actions",
+      "cunningAction": "Cunning Action",
+      "flurryOfBlows": "Flurry of Blows",
+      "secondWind": "Second Wind",
+      "recklessAttack": "Reckless Attack",
+      "divineSmite": "Divine Smite",
+      "huntersMark": "Hunter's Mark"
     },
     "archetypes": {
       "guard": "Guard",
