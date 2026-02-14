@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 1.0.1
 - Better price handling across item sources: shop and loot values now stay more consistent even when compendiums use different price formats.
 - Fewer odd or missing prices during generation/import, especially for mixed currency styles.
 - Overall shop and loot outputs should feel more reliable and predictable in regular play.
