@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 1.0.3
 - Add class signature/bonus-action feature lookup from compendiums for Rogue, Monk, Fighter, Barbarian, Paladin, and Ranger (with locale-aware name matching).
 - Add localized compendium lookup aliases (EN/RU) for Cunning Action, Flurry of Blows, Second Wind, Reckless Attack, Divine Smite, and Hunter's Mark.
 - Improve generated actor skill data by applying expertise (value `2`) to eligible Rogue and Bard skills when proficiency exists.
