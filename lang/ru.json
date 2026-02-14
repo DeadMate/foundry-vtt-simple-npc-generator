@@ -49,6 +49,33 @@
         "hint": "Хранится локально в этом браузере (client setting), не синхронизируется в базу мира."
       }
     },
+    "compendiumLookup": {
+      "multiattack": "Мультиатака|Multiattack",
+      "legendaryResistance": "Легендарное сопротивление|Легендарное сопротивление (3/день)|Legendary Resistance|Legendary Resistance (3/Day)",
+      "legendaryActions": "Легендарные действия|Legendary Actions"
+    },
+    "archetypes": {
+      "guard": "Стражник",
+      "bandit": "Бандит",
+      "acolyte": "Аколит",
+      "scholar": "Учёный",
+      "merchant": "Торговец",
+      "scout": "Разведчик",
+      "noble": "Дворянин",
+      "cultist": "Культист",
+      "mercenary": "Наёмник",
+      "healer": "Целитель",
+      "thief": "Вор",
+      "paladin": "Паладин",
+      "barbarian": "Варвар",
+      "monk": "Монах",
+      "druid": "Друид",
+      "sorcerer": "Чародей",
+      "necromancer": "Некромант",
+      "pirate": "Пират",
+      "spy": "Шпион",
+      "veteran": "Ветеран"
+    },
     "openai": {
       "apiKeyForm": {
         "title": "NPC Button: API-ключ OpenAI",

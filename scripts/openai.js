@@ -915,10 +915,10 @@ function normalizeAiFullNpc(data, context = {}) {
     alignment: sanitizeFlavorText(source.alignment, 40) || "Neutral",
     background: sanitizeFlavorText(source.background, 80) || "None",
     cr: normalizeCr(source.cr, tier),
-    ac: clampNumber(source.ac, 10, 22, 12 + tier),
-    hp: clampNumber(source.hp, 4, 260, 10 + tier * 12),
+    ac: clampNumber(source.ac, 10, 24, crBasedDefaultAc(normalizeCr(source.cr, tier))),
+    hp: clampNumber(source.hp, 4, 400, crBasedDefaultHp(normalizeCr(source.cr, tier))),
     speed: parseSpeedToFeet(source.speed, 30),
-    prof: clampNumber(source.prof, 2, 6, tier >= 4 ? 4 : tier >= 3 ? 3 : 2),
+    prof: clampNumber(source.prof, 2, 6, crBasedDefaultProf(normalizeCr(source.cr, tier))),
     culture: sanitizeFlavorText(source.culture, 50) || sanitizeFlavorText(context.culture, 50) || "",
     budget: sanitizeFlavorText(source.budget, 20) || sanitizeFlavorText(context.budget, 20) || "normal",
     abilities: normalizeAbilityScores(stats, defaultAbilities),
@@ -965,6 +965,31 @@ function normalizeAiFullNpc(data, context = {}) {
     importantNpc: !!context.importantNpc
   };
 }
+
+/**
+ * Compact CR-based stat lookups for AI normalization defaults (DMG p.274).
+ * These mirror the full table in constants.js but are kept self-contained
+ * to avoid circular module imports.
+ */
+const CR_STAT_TABLE = [
+  [0, 4, 13, 2], [0.125, 10, 13, 2], [0.25, 18, 13, 2], [0.5, 28, 13, 2],
+  [1, 39, 13, 2], [2, 52, 13, 2], [3, 65, 13, 2], [4, 78, 14, 2],
+  [5, 91, 15, 3], [6, 104, 15, 3], [7, 117, 15, 3], [8, 130, 16, 3],
+  [9, 145, 16, 4], [10, 160, 17, 4]
+];
+
+function crStatLookup(cr) {
+  const n = Number(cr);
+  if (!Number.isFinite(n) || n <= 0) return CR_STAT_TABLE[0];
+  for (let i = CR_STAT_TABLE.length - 1; i >= 0; i--) {
+    if (CR_STAT_TABLE[i][0] <= n) return CR_STAT_TABLE[i];
+  }
+  return CR_STAT_TABLE[0];
+}
+
+function crBasedDefaultHp(cr) { return crStatLookup(cr)[1]; }
+function crBasedDefaultAc(cr) { return crStatLookup(cr)[2]; }
+function crBasedDefaultProf(cr) { return crStatLookup(cr)[3]; }
 
 function normalizeClassName(value) {
   const raw = sanitizeFlavorText(value, 40);

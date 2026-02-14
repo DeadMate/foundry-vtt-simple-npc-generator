@@ -6,7 +6,8 @@
     "baseAbilities": {"str": 13, "dex": 12, "con": 12, "int": 10, "wis": 11, "cha": 10},
     "skills": ["ath", "prc"],
     "attackStyle": "melee",
-    "lootTable": "guard"
+    "lootTable": "guard",
+    "alignmentPool": ["Lawful Good", "Lawful Neutral", "Neutral"]
   },
   {
     "id": "bandit",
@@ -15,7 +16,8 @@
     "baseAbilities": {"str": 11, "dex": 14, "con": 12, "int": 10, "wis": 10, "cha": 11},
     "skills": ["ste", "slt"],
     "attackStyle": "mixed",
-    "lootTable": "bandit"
+    "lootTable": "bandit",
+    "alignmentPool": ["Chaotic Evil", "Chaotic Neutral", "Neutral Evil"]
   },
   {
     "id": "acolyte",
@@ -24,7 +26,8 @@
     "baseAbilities": {"str": 9, "dex": 10, "con": 11, "int": 12, "wis": 14, "cha": 11},
     "skills": ["rel", "ins"],
     "attackStyle": "caster",
-    "lootTable": "acolyte"
+    "lootTable": "acolyte",
+    "alignmentPool": ["Lawful Good", "Neutral Good", "Lawful Neutral"]
   },
   {
     "id": "scholar",
@@ -33,7 +36,8 @@
     "baseAbilities": {"str": 8, "dex": 11, "con": 10, "int": 15, "wis": 12, "cha": 10},
     "skills": ["arc", "his", "inv"],
     "attackStyle": "caster",
-    "lootTable": "scholar"
+    "lootTable": "scholar",
+    "alignmentPool": ["Neutral", "Neutral Good", "Lawful Neutral", "Chaotic Neutral"]
   },
   {
     "id": "merchant",
@@ -42,7 +46,8 @@
     "baseAbilities": {"str": 9, "dex": 11, "con": 10, "int": 12, "wis": 11, "cha": 14},
     "skills": ["per", "dec"],
     "attackStyle": "ranged",
-    "lootTable": "merchant"
+    "lootTable": "merchant",
+    "alignmentPool": ["Lawful Neutral", "Neutral", "Neutral Good"]
   },
   {
     "id": "scout",
@@ -51,7 +56,8 @@
     "baseAbilities": {"str": 11, "dex": 15, "con": 12, "int": 10, "wis": 12, "cha": 9},
     "skills": ["sur", "prc", "ste"],
     "attackStyle": "ranged",
-    "lootTable": "scout"
+    "lootTable": "scout",
+    "alignmentPool": ["Neutral", "Neutral Good", "Chaotic Good", "Chaotic Neutral"]
   },
   {
     "id": "noble",
@@ -60,7 +66,8 @@
     "baseAbilities": {"str": 10, "dex": 11, "con": 11, "int": 12, "wis": 11, "cha": 15},
     "skills": ["dec", "ins", "per"],
     "attackStyle": "ranged",
-    "lootTable": "noble"
+    "lootTable": "noble",
+    "alignmentPool": ["Lawful Good", "Lawful Neutral", "Lawful Evil", "Neutral"]
   },
   {
     "id": "cultist",
@@ -69,7 +76,8 @@
     "baseAbilities": {"str": 9, "dex": 12, "con": 11, "int": 11, "wis": 13, "cha": 12},
     "skills": ["rel", "dec"],
     "attackStyle": "caster",
-    "lootTable": "cultist"
+    "lootTable": "cultist",
+    "alignmentPool": ["Chaotic Evil", "Neutral Evil", "Lawful Evil"]
   },
   {
     "id": "mercenary",
@@ -78,7 +86,8 @@
     "baseAbilities": {"str": 14, "dex": 12, "con": 13, "int": 9, "wis": 11, "cha": 10},
     "skills": ["ath", "itm"],
     "attackStyle": "melee",
-    "lootTable": "mercenary"
+    "lootTable": "mercenary",
+    "alignmentPool": ["Neutral", "Chaotic Neutral", "Lawful Neutral", "Neutral Evil"]
   },
   {
     "id": "healer",
@@ -87,7 +96,8 @@
     "baseAbilities": {"str": 9, "dex": 11, "con": 12, "int": 11, "wis": 15, "cha": 10},
     "skills": ["med", "ins"],
     "attackStyle": "caster",
-    "lootTable": "healer"
+    "lootTable": "healer",
+    "alignmentPool": ["Neutral Good", "Lawful Good", "Chaotic Good"]
   },
   {
     "id": "thief",
@@ -96,6 +106,97 @@
     "baseAbilities": {"str": 9, "dex": 15, "con": 11, "int": 12, "wis": 10, "cha": 12},
     "skills": ["ste", "slt", "acr"],
     "attackStyle": "mixed",
-    "lootTable": "thief"
+    "lootTable": "thief",
+    "alignmentPool": ["Chaotic Neutral", "Neutral Evil", "Chaotic Evil"]
+  },
+  {
+    "id": "paladin",
+    "name": "Paladin",
+    "tags": ["martial", "holy"],
+    "baseAbilities": {"str": 14, "dex": 10, "con": 12, "int": 10, "wis": 12, "cha": 14},
+    "skills": ["ath", "rel", "ins"],
+    "attackStyle": "melee",
+    "lootTable": "guard",
+    "alignmentPool": ["Lawful Good", "Neutral Good", "Lawful Neutral"]
+  },
+  {
+    "id": "barbarian",
+    "name": "Barbarian",
+    "tags": ["martial", "brute"],
+    "baseAbilities": {"str": 16, "dex": 12, "con": 14, "int": 8, "wis": 10, "cha": 9},
+    "skills": ["ath", "itm", "sur"],
+    "attackStyle": "melee",
+    "lootTable": "mercenary",
+    "alignmentPool": ["Chaotic Neutral", "Chaotic Good", "Neutral"]
+  },
+  {
+    "id": "monk",
+    "name": "Monk",
+    "tags": ["martial", "monk"],
+    "baseAbilities": {"str": 11, "dex": 15, "con": 12, "int": 10, "wis": 14, "cha": 9},
+    "skills": ["acr", "ste", "ins"],
+    "attackStyle": "melee",
+    "lootTable": "acolyte",
+    "alignmentPool": ["Lawful Neutral", "Lawful Good", "Neutral"]
+  },
+  {
+    "id": "druid",
+    "name": "Druid",
+    "tags": ["caster", "wilderness", "nature"],
+    "baseAbilities": {"str": 9, "dex": 12, "con": 12, "int": 11, "wis": 15, "cha": 10},
+    "skills": ["sur", "nat", "med"],
+    "attackStyle": "caster",
+    "lootTable": "healer",
+    "alignmentPool": ["Neutral", "Neutral Good", "Chaotic Neutral"]
+  },
+  {
+    "id": "sorcerer",
+    "name": "Sorcerer",
+    "tags": ["caster"],
+    "baseAbilities": {"str": 8, "dex": 12, "con": 12, "int": 10, "wis": 10, "cha": 16},
+    "skills": ["arc", "per", "dec"],
+    "attackStyle": "caster",
+    "lootTable": "scholar",
+    "alignmentPool": ["Chaotic Neutral", "Chaotic Good", "Neutral", "Chaotic Evil"]
+  },
+  {
+    "id": "necromancer",
+    "name": "Necromancer",
+    "tags": ["caster", "dark"],
+    "baseAbilities": {"str": 8, "dex": 11, "con": 11, "int": 15, "wis": 12, "cha": 10},
+    "skills": ["arc", "rel", "dec"],
+    "attackStyle": "caster",
+    "lootTable": "cultist",
+    "alignmentPool": ["Neutral Evil", "Lawful Evil", "Chaotic Evil"]
+  },
+  {
+    "id": "pirate",
+    "name": "Pirate",
+    "tags": ["martial", "criminal"],
+    "baseAbilities": {"str": 13, "dex": 14, "con": 12, "int": 10, "wis": 10, "cha": 12},
+    "skills": ["ath", "itm", "prc"],
+    "attackStyle": "mixed",
+    "lootTable": "bandit",
+    "alignmentPool": ["Chaotic Neutral", "Chaotic Evil", "Neutral Evil"]
+  },
+  {
+    "id": "spy",
+    "name": "Spy",
+    "tags": ["criminal", "social"],
+    "baseAbilities": {"str": 9, "dex": 14, "con": 10, "int": 13, "wis": 12, "cha": 14},
+    "skills": ["ste", "dec", "ins", "per"],
+    "attackStyle": "mixed",
+    "lootTable": "thief",
+    "alignmentPool": ["Neutral", "Neutral Evil", "Lawful Neutral", "Chaotic Neutral"]
+  },
+  {
+    "id": "veteran",
+    "name": "Veteran",
+    "tags": ["martial", "law"],
+    "baseAbilities": {"str": 14, "dex": 12, "con": 14, "int": 10, "wis": 12, "cha": 10},
+    "skills": ["ath", "prc", "itm"],
+    "attackStyle": "melee",
+    "lootTable": "mercenary",
+    "alignmentPool": ["Lawful Neutral", "Lawful Good", "Neutral"]
   }
 ]

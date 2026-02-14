@@ -584,7 +584,10 @@ export async function openNpcDialog() {
       ui.notifications?.warn(i18nText("ui.warnNoSpeciesCompendiumEntries"));
     }
     const options = archetypes
-      .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`)
+      .map((a) => {
+        const label = i18nText(`archetypes.${a.id}`, a.name);
+        return `<option value="${escapeHtml(a.id)}">${escapeHtml(label)}</option>`;
+      })
       .join("");
     const folderOptions = getActorFolderOptions();
     const lastFolder = getLastFolderId();

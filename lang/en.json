@@ -49,6 +49,33 @@
         "hint": "Stored locally in this browser (client setting), never synced to the world database."
       }
     },
+    "compendiumLookup": {
+      "multiattack": "Multiattack",
+      "legendaryResistance": "Legendary Resistance|Legendary Resistance (3/Day)",
+      "legendaryActions": "Legendary Actions"
+    },
+    "archetypes": {
+      "guard": "Guard",
+      "bandit": "Bandit",
+      "acolyte": "Acolyte",
+      "scholar": "Scholar",
+      "merchant": "Merchant",
+      "scout": "Scout",
+      "noble": "Noble",
+      "cultist": "Cultist",
+      "mercenary": "Mercenary",
+      "healer": "Healer",
+      "thief": "Thief",
+      "paladin": "Paladin",
+      "barbarian": "Barbarian",
+      "monk": "Monk",
+      "druid": "Druid",
+      "sorcerer": "Sorcerer",
+      "necromancer": "Necromancer",
+      "pirate": "Pirate",
+      "spy": "Spy",
+      "veteran": "Veteran"
+    },
     "openai": {
       "apiKeyForm": {
         "title": "NPC Button: OpenAI API Key",

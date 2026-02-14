@@ -1,7 +1,20 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- NPC stats (HP, AC, proficiency) now scale from the DMG Monster Statistics by CR table instead of flat linear formulas — NPCs at every tier feel appropriately tough.
+- Boss NPCs get 1.5× HP and +2 AC on top of their CR baseline, making them stand out in encounters.
+- Ability scores now affect combat: attack bonus, damage, and spell save DC are derived from the NPC's primary ability + proficiency.
+- Saving throw proficiencies are assigned by class following PHB rules (e.g. Fighter gets STR/CON, Wizard gets INT/WIS).
+- Caster NPCs receive proper spell slots that scale by tier, and maximum spell level has been raised (up to 7th for tier 4 bosses).
+- Multiattack (tier 2+), Legendary Resistance and Legendary Actions (tier 3+ boss) are now pulled from compendium monster features with correct icons and data — falls back to built-in definitions if the compendium entry is not cached.
+- Compendium feature lookup is fully locale-aware: item names are read from language files so any translation can add its own variants without touching code.
+- Encounter balancing rewritten to use the DMG XP-budget system with proper encounter multipliers, party level/size scaling, and difficulty tiers (Easy → Deadly).
+- Alignment is now picked from a thematic pool per archetype (e.g. Guards lean Lawful, Bandits lean Chaotic Evil) instead of pure random.
+- Added 9 new archetypes: Paladin, Barbarian, Monk, Druid, Sorcerer, Necromancer, Pirate, Spy, and Veteran — bringing the total to 20, matching all available token art.
+- Archetype names in the generator dialog are now fully localized (Russian translations included, extensible to any language).
+- Biography HTML is now sanitized with escapeHtml to prevent XSS from user-injected trait data.
+- Compendium cache is written without pretty-print formatting, significantly reducing file size.
+- Cache now includes a version hash and warns in the console when it becomes stale after a module or system update.
 
 ## 1.0.1
 - Better price handling across item sources: shop and loot values now stay more consistent even when compendiums use different price formats.

@@ -126,3 +126,49 @@ export const MAGIC_ITEM_CHANCE = {
   4: 0.2,
   boss: 0.5
 };
+
+/**
+ * Monster Statistics by Challenge Rating (based on DMG p.274)
+ * Keys are CR as a number (fractional for sub-1 CRs).
+ * hp = expected hit points, ac = expected armor class, prof = proficiency bonus
+ */
+export const MONSTER_STATS_BY_CR = {
+  0:      { hp: 4,   ac: 13, prof: 2 },
+  0.125:  { hp: 10,  ac: 13, prof: 2 },
+  0.25:   { hp: 18,  ac: 13, prof: 2 },
+  0.5:    { hp: 28,  ac: 13, prof: 2 },
+  1:      { hp: 39,  ac: 13, prof: 2 },
+  2:      { hp: 52,  ac: 13, prof: 2 },
+  3:      { hp: 65,  ac: 13, prof: 2 },
+  4:      { hp: 78,  ac: 14, prof: 2 },
+  5:      { hp: 91,  ac: 15, prof: 3 },
+  6:      { hp: 104, ac: 15, prof: 3 },
+  7:      { hp: 117, ac: 15, prof: 3 },
+  8:      { hp: 130, ac: 16, prof: 3 },
+  9:      { hp: 145, ac: 16, prof: 4 },
+  10:     { hp: 160, ac: 17, prof: 4 }
+};
+
+/**
+ * Get DMG-based monster stats for a numeric CR value.
+ * Falls back to the nearest lower CR entry when the exact CR is not found.
+ * @param {number} cr - Challenge rating
+ * @returns {{hp: number, ac: number, prof: number}}
+ */
+export function getMonsterStatsByCr(cr) {
+  const n = Number(cr);
+  if (!Number.isFinite(n) || n <= 0) return MONSTER_STATS_BY_CR[0];
+  if (MONSTER_STATS_BY_CR[n]) return MONSTER_STATS_BY_CR[n];
+  // Find nearest lower CR
+  const keys = Object.keys(MONSTER_STATS_BY_CR).map(Number).sort((a, b) => a - b);
+  let best = keys[0];
+  for (const k of keys) {
+    if (k <= n) best = k;
+    else break;
+  }
+  return MONSTER_STATS_BY_CR[best];
+}
+
+/** Boss stat multipliers */
+export const BOSS_HP_MULTIPLIER = 1.5;
+export const BOSS_AC_BONUS = 2;

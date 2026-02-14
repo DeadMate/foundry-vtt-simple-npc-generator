@@ -12,7 +12,10 @@ import {
   HP_VARIANCE_PER_TIER,
   HP_BOSS_BONUS,
   HP_MINIMUM,
-  MAGIC_ITEM_CHANCE
+  MAGIC_ITEM_CHANCE,
+  getMonsterStatsByCr,
+  BOSS_HP_MULTIPLIER,
+  BOSS_AC_BONUS
 } from "./constants.js";
 import { DATA_CACHE } from "./data-loader.js";
 import {
@@ -22,7 +25,8 @@ import {
   randInt,
   chance,
   cloneData,
-  toItemData
+  toItemData,
+  escapeHtml
 } from "./utils.js";
 import {
   getPacks,
@@ -52,6 +56,7 @@ import {
   collectAllItemPackNames
 } from "./cache.js";
 import { getSearchStrings } from "./utils.js";
+import { t } from "./i18n.js";
 
 const LOOKUP_CACHE_MAX_CLASS_KEYS = 128;
 const LOOKUP_CACHE_MAX_AI_INDEX_KEYS = 48;
@@ -109,12 +114,16 @@ export function generateNpc(options) {
   const abilities = applyTierToAbilities(varyBaseAbilities(archetype.baseAbilities), tier, importantNpc);
   const prime = getPrimeAbilities(abilities);
 
-  const ac = Math.min(20, BASE_AC + tier + (importantNpc ? 1 : 0));
-  const hp = Math.max(HP_MINIMUM, HP_BASE + tier * HP_PER_TIER + randInt(0, tier * HP_VARIANCE_PER_TIER) + (importantNpc ? HP_BOSS_BONUS : 0));
+  const cr = rollCrByTier(tier);
+  const crStats = getMonsterStatsByCr(cr);
+
+  const hpVariance = randInt(0, Math.max(1, Math.round(crStats.hp * 0.15)));
+  const baseHp = crStats.hp + hpVariance;
+  const hp = Math.max(HP_MINIMUM, importantNpc ? Math.round(baseHp * BOSS_HP_MULTIPLIER) : baseHp);
+  const ac = Math.min(22, importantNpc ? crStats.ac + BOSS_AC_BONUS : crStats.ac);
   const speed = 30;
 
-  const prof = getProfBonus(tier);
-  const cr = rollCrByTier(tier);
+  const prof = crStats.prof;
 
   const loot = includeLoot ? buildLoot(archetype, tier) : null;
 
@@ -378,17 +387,15 @@ export async function buildActorData(npc, folderId = null) {
   const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
 
   const biography = buildBiography(npc);
-  const alignment = pickRandom([
-    "Lawful Good",
-    "Neutral Good",
-    "Chaotic Good",
-    "Lawful Neutral",
-    "Neutral",
-    "Chaotic Neutral",
-    "Lawful Evil",
-    "Neutral Evil",
-    "Chaotic Evil"
-  ]);
+  const ALL_ALIGNMENTS = [
+    "Lawful Good", "Neutral Good", "Chaotic Good",
+    "Lawful Neutral", "Neutral", "Chaotic Neutral",
+    "Lawful Evil", "Neutral Evil", "Chaotic Evil"
+  ];
+  const alignPool = npc.archetype?.alignmentPool;
+  const alignment = Array.isArray(alignPool) && alignPool.length
+    ? pickRandom(alignPool)
+    : pickRandom(ALL_ALIGNMENTS);
 
   const abilityData = {};
   for (const [key, value] of Object.entries(npc.abilities)) {
@@ -405,6 +412,9 @@ export async function buildActorData(npc, folderId = null) {
   items.push(...(await buildRoleAbilityItems(npc)));
   items.push(...(await buildRoleItems(npc)));
 
+  // Combat features: Multiattack, Legendary Actions, Legendary Resistance
+  items.push(...(await buildCombatFeatureItems(npc)));
+
   if (npc.loot) {
     const lootItems = [];
     for (const name of npc.loot.items) {
@@ -415,6 +425,16 @@ export async function buildActorData(npc, folderId = null) {
   }
 
   normalizeArmorItems(items);
+
+  // Compute ability-based bonuses for NPC combat effectiveness
+  const primeAbility = npc.prime?.[0] || "str";
+  const primeScore = npc.abilities?.[primeAbility] || 10;
+  const primeMod = Math.floor((primeScore - 10) / 2);
+  const attackBonus = primeMod + npc.prof;
+  const saveDc = 8 + primeMod + npc.prof;
+
+  // Saving throw proficiencies by class
+  const saveProficiencies = getSavingThrowProficiencies(npc.className);
 
   const actorData = {
     name: npc.name,
@@ -428,7 +448,7 @@ export async function buildActorData(npc, folderId = null) {
       disposition: 0
     },
     system: {
-      abilities: abilityData,
+      abilities: applyAbilitySaveProficiencies(abilityData, saveProficiencies),
       skills: skillsData,
       attributes: {
         ac: { value: npc.ac },
@@ -436,12 +456,20 @@ export async function buildActorData(npc, folderId = null) {
         movement: { walk: npc.speed },
         prof: npc.prof
       },
+      bonuses: {
+        mwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
+        rwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
+        msak: { attack: `+${attackBonus}`, damage: "" },
+        rsak: { attack: `+${attackBonus}`, damage: "" },
+        spell: { dc: String(saveDc) }
+      },
       details: {
         cr: npc.cr,
         alignment,
         race: npc.race,
         type: { value: "humanoid", subtype: "" },
-        biography: { value: biography }
+        biography: { value: biography },
+        spellLevel: npc.spellCasterLevel || 0
       },
       traits: {
         size: "med",
@@ -451,6 +479,11 @@ export async function buildActorData(npc, folderId = null) {
     },
     items
   };
+
+  // Add spell slots for caster NPCs
+  if (npc.archetype?.tags?.includes("caster")) {
+    actorData.system.spells = buildSpellSlots(npc.tier, npc.importantNpc);
+  }
 
   return actorData;
 }
@@ -472,20 +505,20 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
     if (fallbackWeapon) items.push(fallbackWeapon);
   }
 
+  // Combat features: Multiattack, Legendary Actions, Legendary Resistance
+  items.push(...(await buildCombatFeatureItems(npc)));
+
   normalizeArmorItems(items);
 
   const biography = buildBiography(npc);
-  const alignment = String(npc.alignment || "").trim() || pickRandom([
-    "Lawful Good",
-    "Neutral Good",
-    "Chaotic Good",
-    "Lawful Neutral",
-    "Neutral",
-    "Chaotic Neutral",
-    "Lawful Evil",
-    "Neutral Evil",
-    "Chaotic Evil"
-  ]);
+  const AI_ALL_ALIGNMENTS = [
+    "Lawful Good", "Neutral Good", "Chaotic Good",
+    "Lawful Neutral", "Neutral", "Chaotic Neutral",
+    "Lawful Evil", "Neutral Evil", "Chaotic Evil"
+  ];
+  const aiAlignPool = npc.archetype?.alignmentPool;
+  const alignment = String(npc.alignment || "").trim() ||
+    (Array.isArray(aiAlignPool) && aiAlignPool.length ? pickRandom(aiAlignPool) : pickRandom(AI_ALL_ALIGNMENTS));
 
   const abilityData = {};
   for (const [key, value] of Object.entries(npc.abilities || {})) {
@@ -494,6 +527,17 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
   const skillsData = buildSkillsData(npc.skillIds || npc.archetype.skills || []);
 
   const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
+
+  // Compute ability-based bonuses for AI NPC
+  const primeAbility = npc.prime?.[0] || "str";
+  const primeScore = npc.abilities?.[primeAbility] || 10;
+  const primeMod = Math.floor((primeScore - 10) / 2);
+  const attackBonus = primeMod + npc.prof;
+  const saveDc = 8 + primeMod + npc.prof;
+
+  const className = npc.className || "Fighter";
+  const saveProficiencies = getSavingThrowProficiencies(className);
+
   const actorData = {
     name: npc.name,
     type: "npc",
@@ -506,7 +550,7 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
       disposition: 0
     },
     system: {
-      abilities: abilityData,
+      abilities: applyAbilitySaveProficiencies(abilityData, saveProficiencies),
       skills: skillsData,
       attributes: {
         ac: { value: npc.ac },
@@ -514,12 +558,20 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
         movement: { walk: npc.speed },
         prof: npc.prof
       },
+      bonuses: {
+        mwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
+        rwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
+        msak: { attack: `+${attackBonus}`, damage: "" },
+        rsak: { attack: `+${attackBonus}`, damage: "" },
+        spell: { dc: String(saveDc) }
+      },
       details: {
         cr: npc.cr,
         alignment,
         race: npc.race,
         type: { value: "humanoid", subtype: "" },
-        biography: { value: biography }
+        biography: { value: biography },
+        spellLevel: 0
       },
       traits: {
         size: "med",
@@ -529,6 +581,12 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
     },
     items
   };
+
+  // Add spell slots if AI NPC is a caster
+  const isCasterAi = npc.archetypeTags?.includes("caster") || npc.archetype?.tags?.includes("caster");
+  if (isCasterAi) {
+    actorData.system.spells = buildSpellSlots(npc.tier, npc.importantNpc);
+  }
 
   return { actorData, resolvedItems, missingItems, matchDetails };
 }
@@ -572,9 +630,9 @@ function normalizeAiBlueprintForActor(blueprint) {
     archetypeTags: tags,
     tier,
     cr: normalizeCrForActor(source.cr, tier),
-    prof: clampRange(source.prof, 2, 6, getProfBonus(tier)),
-    ac: clampRange(source.ac, 10, 24, 12 + tier),
-    hp: clampRange(source.hp, 4, 300, 10 + tier * 12),
+    prof: clampRange(source.prof, 2, 6, getMonsterStatsByCr(normalizeCrForActor(source.cr, tier)).prof),
+    ac: clampRange(source.ac, 10, 24, getMonsterStatsByCr(normalizeCrForActor(source.cr, tier)).ac),
+    hp: clampRange(source.hp, 4, 400, getMonsterStatsByCr(normalizeCrForActor(source.cr, tier)).hp),
     speed: parseSpeedFeetForActor(source.speed, 30),
     culture: String(source.culture || "").trim(),
     alignment: String(source.alignment || "").trim(),
@@ -1592,18 +1650,19 @@ function dedupeStringList(values, maxItems = 10) {
  * @returns {string}
  */
 export function buildBiography(npc) {
+  const e = escapeHtml;
   const lines = [];
-  lines.push(`<p><strong>Role:</strong> ${npc.archetype.name} (Tier ${npc.tier}, CR ${npc.cr})</p>`);
-  if (npc.className) lines.push(`<p><strong>Class:</strong> ${npc.className}</p>`);
-  lines.push(`<p><strong>Race:</strong> ${npc.race}</p>`);
-  lines.push(`<p><strong>Appearance:</strong> ${npc.appearance.join(", ")}</p>`);
-  lines.push(`<p><strong>Speech:</strong> ${npc.speech}</p>`);
-  lines.push(`<p><strong>Motivation:</strong> ${npc.motivation}</p>`);
-  if (npc.secret) lines.push(`<p><strong>Secret:</strong> ${npc.secret}</p>`);
-  if (npc.hook) lines.push(`<p><strong>Hook:</strong> ${npc.hook}</p>`);
-  if (npc.rumor) lines.push(`<p><strong>Rumor:</strong> ${npc.rumor}</p>`);
-  if (npc.mannerism) lines.push(`<p><strong>Mannerism:</strong> ${npc.mannerism}</p>`);
-  lines.push(`<p><strong>Quirk:</strong> ${npc.quirk}</p>`);
+  lines.push(`<p><strong>Role:</strong> ${e(npc.archetype.name)} (Tier ${e(npc.tier)}, CR ${e(npc.cr)})</p>`);
+  if (npc.className) lines.push(`<p><strong>Class:</strong> ${e(npc.className)}</p>`);
+  lines.push(`<p><strong>Race:</strong> ${e(npc.race)}</p>`);
+  lines.push(`<p><strong>Appearance:</strong> ${(npc.appearance || []).map(e).join(", ")}</p>`);
+  lines.push(`<p><strong>Speech:</strong> ${e(npc.speech)}</p>`);
+  lines.push(`<p><strong>Motivation:</strong> ${e(npc.motivation)}</p>`);
+  if (npc.secret) lines.push(`<p><strong>Secret:</strong> ${e(npc.secret)}</p>`);
+  if (npc.hook) lines.push(`<p><strong>Hook:</strong> ${e(npc.hook)}</p>`);
+  if (npc.rumor) lines.push(`<p><strong>Rumor:</strong> ${e(npc.rumor)}</p>`);
+  if (npc.mannerism) lines.push(`<p><strong>Mannerism:</strong> ${e(npc.mannerism)}</p>`);
+  lines.push(`<p><strong>Quirk:</strong> ${e(npc.quirk)}</p>`);
   return lines.join("\n");
 }
 
@@ -1622,6 +1681,221 @@ export function buildSkillsData(skillIds) {
     if (data[skill]) data[skill].value = 1;
   });
   return data;
+}
+
+// ========== Saving Throws & Spell Slots ==========
+
+/**
+ * Get saving throw proficiency abilities for a given class.
+ * Based on PHB class save proficiencies.
+ * @param {string} className - Class name
+ * @returns {string[]} Array of ability keys (e.g. ["str", "con"])
+ */
+export function getSavingThrowProficiencies(className) {
+  switch (String(className || "").trim()) {
+    case "Fighter":   return ["str", "con"];
+    case "Barbarian":  return ["str", "con"];
+    case "Paladin":    return ["wis", "cha"];
+    case "Ranger":     return ["str", "dex"];
+    case "Rogue":      return ["dex", "int"];
+    case "Monk":       return ["str", "dex"];
+    case "Cleric":     return ["wis", "cha"];
+    case "Wizard":     return ["int", "wis"];
+    case "Sorcerer":   return ["con", "cha"];
+    case "Warlock":    return ["wis", "cha"];
+    case "Bard":       return ["dex", "cha"];
+    case "Druid":      return ["int", "wis"];
+    default:           return ["str", "con"];
+  }
+}
+
+/**
+ * Apply saving throw proficiencies to ability data object.
+ * Mutates the abilityData in-place and returns it.
+ * @param {Object} abilityData - Ability data object ({str: {value}, ...})
+ * @param {string[]} proficientSaves - Array of ability keys with proficiency
+ * @returns {Object}
+ */
+export function applyAbilitySaveProficiencies(abilityData, proficientSaves) {
+  const savesSet = new Set(proficientSaves || []);
+  for (const key of Object.keys(abilityData)) {
+    if (savesSet.has(key)) {
+      abilityData[key].proficient = 1;
+    }
+  }
+  return abilityData;
+}
+
+/**
+ * Build spell slot allocation for a caster NPC.
+ * Models a half- to full-caster slot progression based on tier.
+ * @param {number} tier - NPC tier (1-4)
+ * @param {boolean} importantNpc - Whether NPC is a boss
+ * @returns {Object} Foundry-compatible spells object
+ */
+export function buildSpellSlots(tier, importantNpc) {
+  const bonus = importantNpc ? 1 : 0;
+  const slots = {};
+
+  if (tier >= 1) slots.spell1 = { value: 3 + bonus, max: 3 + bonus, override: null };
+  if (tier >= 1) slots.spell2 = { value: 2 + bonus, max: 2 + bonus, override: null };
+  if (tier >= 2) slots.spell3 = { value: 2 + bonus, max: 2 + bonus, override: null };
+  if (tier >= 3) slots.spell4 = { value: 2, max: 2, override: null };
+  if (tier >= 3) slots.spell5 = { value: 1 + bonus, max: 1 + bonus, override: null };
+  if (tier >= 4) slots.spell6 = { value: 1, max: 1, override: null };
+  if (tier >= 4 && importantNpc) slots.spell7 = { value: 1, max: 1, override: null };
+
+  return slots;
+}
+
+// ========== Combat Feature Items ==========
+
+/**
+ * Build combat feature items based on NPC tier and boss status.
+ * - Tier 2+: Multiattack (2 weapon attacks)
+ * - Tier 3+ boss: Legendary Actions (3/day)
+ * - Tier 4 boss: Legendary Resistance (3/day)
+ * @param {Object} npc - NPC data
+ * @returns {Object[]} Array of feature item data objects
+ */
+/**
+ * Search for a cached document by multiple name variants (handles localized compendiums).
+ * Names are collected from lang files under compendiumLookup.<key> so any locale
+ * can list its own compendium item names without touching JS code.
+ * Falls back to the English canonical name if nothing matches.
+ * @param {string[]} packs - Pack collection names
+ * @param {string} lookupKey - Key under compendiumLookup (e.g. "multiattack")
+ * @param {string} canonicalName - English fallback name
+ * @returns {Object|null}
+ */
+function findCombatFeatureDoc(packs, lookupKey, canonicalName) {
+  // Collect localized name variants from lang file (pipe-separated)
+  const langNames = t(`compendiumLookup.${lookupKey}`, "");
+  const names = langNames
+    ? langNames.split("|").map((s) => s.trim()).filter(Boolean)
+    : [];
+  // Always include canonical English name as last resort
+  if (!names.includes(canonicalName)) names.push(canonicalName);
+  for (const name of names) {
+    const doc = getCachedDocByName(packs, name);
+    if (doc) return doc;
+  }
+  return null;
+}
+
+export async function buildCombatFeatureItems(npc) {
+  const items = [];
+  const tier = npc?.tier || 1;
+  const isBoss = !!npc?.importantNpc;
+  const attackCount = tier >= 3 ? 3 : 2;
+  const featurePacks = getPacks("features");
+
+  // Multiattack for tier 2+ (most MM NPCs above CR 1 have this)
+  if (tier >= 2) {
+    const compendiumMultiattack = findCombatFeatureDoc(featurePacks, "multiattack", "Multiattack");
+    if (compendiumMultiattack) {
+      const item = cloneItemData(compendiumMultiattack);
+      // Override description with correct attack count for this NPC
+      if (item.system?.description) {
+        item.system.description.value = `<p>This creature makes ${attackCount} attacks with its weapon.</p>`;
+      }
+      items.push(ensureActivities(item));
+    } else {
+      items.push({
+        name: "Multiattack",
+        type: "feat",
+        system: {
+          description: {
+            value: `<p>This creature makes ${attackCount} attacks with its weapon.</p>`
+          },
+          type: { value: "monster", subtype: "" },
+          activation: { type: "action", cost: 1 },
+          duration: {},
+          target: {},
+          range: {},
+          uses: {},
+          actionType: "",
+          damage: { parts: [] }
+        }
+      });
+    }
+  }
+
+  // Legendary Resistance for tier 3+ boss (3/day, standard MM pattern)
+  if (isBoss && tier >= 3) {
+    const compendiumLR = findCombatFeatureDoc(featurePacks, "legendaryResistance", "Legendary Resistance");
+    if (compendiumLR) {
+      const item = cloneItemData(compendiumLR);
+      // Ensure 3/day uses
+      if (item.system) {
+        item.system.uses = Object.assign(item.system.uses || {}, { value: 3, max: "3", per: "day" });
+      }
+      items.push(ensureActivities(item));
+    } else {
+      items.push({
+        name: "Legendary Resistance (3/Day)",
+        type: "feat",
+        system: {
+          description: {
+            value: "<p>If this creature fails a saving throw, it can choose to succeed instead.</p>"
+          },
+          type: { value: "monster", subtype: "" },
+          activation: { type: "special", cost: null },
+          duration: {},
+          target: {},
+          range: {},
+          uses: { value: 3, max: "3", per: "day", recovery: "" },
+          actionType: "",
+          damage: { parts: [] }
+        }
+      });
+    }
+  }
+
+  // Legendary Actions for tier 3+ boss (3 per round, standard MM pattern)
+  if (isBoss && tier >= 3) {
+    const compendiumLA = findCombatFeatureDoc(featurePacks, "legendaryActions", "Legendary Actions");
+    if (compendiumLA) {
+      const item = cloneItemData(compendiumLA);
+      if (item.system) {
+        item.system.uses = Object.assign(item.system.uses || {}, { value: 3, max: "3", per: "round" });
+      }
+      items.push(ensureActivities(item));
+    } else {
+      const legendaryCost2Desc = tier >= 4
+        ? "<p>This creature moves up to its speed without provoking opportunity attacks.</p>"
+        : "<p>This creature moves up to half its speed.</p>";
+
+      items.push({
+        name: "Legendary Actions",
+        type: "feat",
+        system: {
+          description: {
+            value: [
+              "<p>This creature can take 3 legendary actions, choosing from the options below.",
+              "Only one legendary action can be used at a time and only at the end of another creature's turn.",
+              "Spent legendary actions are regained at the start of each turn.</p>",
+              "<ul>",
+              "<li><strong>Attack (Costs 1 Action).</strong> <p>This creature makes one weapon attack.</p></li>",
+              `<li><strong>Move (Costs 1 Action).</strong> ${legendaryCost2Desc}</li>`,
+              "<li><strong>Detect (Costs 1 Action).</strong> <p>This creature makes a Wisdom (Perception) check.</p></li>",
+              "</ul>"
+            ].join("\n")
+          },
+          type: { value: "monster", subtype: "" },
+          activation: { type: "legendary", cost: 1 },
+          duration: {},
+          target: {},
+          range: {},
+          uses: { value: 3, max: "3", per: "round", recovery: "" },
+          actionType: "",
+          damage: { parts: [] }
+        }
+      });
+    }
+  }
+
+  return items;
 }
 
 // ========== Weapon Building ==========
@@ -1725,6 +1999,18 @@ export function getWeaponKeywords(style, tags) {
  */
 export function getClassForArchetype(archetype) {
   const tags = archetype.tags || [];
+  const id = archetype.id || "";
+  // Exact archetype-to-class overrides for new archetypes
+  if (id === "paladin") return "Paladin";
+  if (id === "barbarian") return "Barbarian";
+  if (id === "monk") return "Monk";
+  if (id === "druid") return "Druid";
+  if (id === "sorcerer") return "Sorcerer";
+  if (id === "necromancer") return "Wizard";
+  // Tag-based fallback
+  if (tags.includes("nature")) return "Druid";
+  if (tags.includes("brute")) return "Barbarian";
+  if (tags.includes("monk")) return "Monk";
   if (tags.includes("holy")) return "Cleric";
   if (tags.includes("dark")) return "Warlock";
   if (tags.includes("knowledge")) return "Wizard";
@@ -2008,15 +2294,20 @@ export function getCantripCountByTier(tier) {
 }
 
 /**
- * Get max spell level by tier
+ * Get max spell level by tier.
+ * Aligned with typical NPC caster power in the Monster Manual:
+ * Tier 1 (CR 0-1/2): cantrips + 1st level
+ * Tier 2 (CR 1-3): up to 3rd level spells
+ * Tier 3 (CR 4-6): up to 5th level spells (Fireball, Counterspell, etc.)
+ * Tier 4 (CR 7-10): up to 7th level spells (Forcecage, etc.)
  * @param {number} tier - Tier level
  * @returns {number}
  */
 export function getMaxSpellLevelByTier(tier) {
-  if (tier <= 1) return 1;
-  if (tier === 2) return 2;
-  if (tier === 3) return 3;
-  return 4;
+  if (tier <= 1) return 2;
+  if (tier === 2) return 3;
+  if (tier === 3) return 5;
+  return 7;
 }
 
 /**

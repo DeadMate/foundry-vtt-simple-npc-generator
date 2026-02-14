@@ -40,6 +40,18 @@ export async function loadData() {
       DATA_CACHE.speciesEntries = await getSpeciesEntries();
       DATA_CACHE.compendiumCache = await fetchOptionalJson(COMPENDIUM_CACHE_FILE);
       DATA_CACHE.compendiumLists = DATA_CACHE.compendiumCache?.packsByType || null;
+
+      // Validate cache version — warn if stale
+      if (DATA_CACHE.compendiumCache?.cacheVersion) {
+        const moduleVersion = game.modules?.get(MODULE_ID)?.version || "unknown";
+        const systemVersion = game.system?.version || "unknown";
+        const packCount = Object.keys(DATA_CACHE.compendiumCache?.packs || {}).length;
+        const expected = `${moduleVersion}|${systemVersion}|${packCount}`;
+        if (DATA_CACHE.compendiumCache.cacheVersion !== expected) {
+          console.warn(`${MODULE_ID} | Compendium cache is stale (built with ${DATA_CACHE.compendiumCache.cacheVersion}, expected ${expected}). Consider rebuilding.`);
+        }
+      }
+
       DATA_CACHE.loaded = true;
       validateDataCache();
     } catch (err) {

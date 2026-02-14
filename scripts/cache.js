@@ -436,7 +436,12 @@ export async function buildCompendiumCache() {
 
   output.packsByType = buildPacksByType(output.packs);
 
-  const data = JSON.stringify(output, null, 2);
+  // Add version hash for cache invalidation
+  const moduleVersion = game.modules?.get(MODULE_ID)?.version || "unknown";
+  const systemVersion = game.system?.version || "unknown";
+  output.cacheVersion = `${moduleVersion}|${systemVersion}|${Object.keys(output.packs).length}`;
+
+  const data = JSON.stringify(output);
   const file = new File([data], `${COMPENDIUM_CACHE_FILE}.json`, {
     type: "application/json"
   });
