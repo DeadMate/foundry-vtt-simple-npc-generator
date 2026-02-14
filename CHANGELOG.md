@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 1.0.2
 - NPC stats (HP, AC, proficiency) now scale from the DMG Monster Statistics by CR table instead of flat linear formulas — NPCs at every tier feel appropriately tough.
 - Boss NPCs get 1.5× HP and +2 AC on top of their CR baseline, making them stand out in encounters.
 - Ability scores now affect combat: attack bonus, damage, and spell save DC are derived from the NPC's primary ability + proficiency.
