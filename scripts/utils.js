@@ -175,12 +175,21 @@ export function generateId() {
  * @returns {{value: number, denom: string}|null}
  */
 export function parsePriceString(text) {
-  const match = String(text)
+  const raw = String(text || "")
+    .replace(/\u00a0/g, " ")
     .trim()
-    .toLowerCase()
-    .match(/([0-9]+(?:\.[0-9]+)?)\s*(pp|gp|ep|sp|cp)?/);
-  if (!match) return null;
-  return { value: Number(match[1]), denom: match[2] || "gp" };
+    .toLowerCase();
+  if (!raw) return null;
+
+  const denomMatch = raw.match(/\b(pp|gp|ep|sp|cp)\b/);
+  const denom = denomMatch?.[1] || "gp";
+
+  const valueMatch = raw.match(/-?\d[\d\s,._]*/);
+  if (!valueMatch) return null;
+
+  const value = parseNumericPriceToken(valueMatch[0]);
+  if (!Number.isFinite(value)) return null;
+  return { value, denom };
 }
 
 /**
@@ -254,13 +263,84 @@ export function getItemPriceValue(entryOrDoc) {
   if (price === null || price === undefined) return null;
   if (typeof price === "number") return price;
   const value = price.value ?? price;
-  const denom = String(price.denomination || price.unit || "").toLowerCase();
+  const denom = String(
+    price.denomination ||
+    price.unit ||
+    price.currency ||
+    value?.denomination ||
+    value?.unit ||
+    value?.currency ||
+    ""
+  ).toLowerCase();
   if (typeof value === "number") return convertToCp(value, denom);
   if (typeof value === "string") {
     const parsed = parsePriceString(value);
     if (parsed) return convertToCp(parsed.value, parsed.denom);
   }
+  if (value && typeof value === "object") {
+    if (typeof value.value === "number" || typeof value.value === "string") {
+      const nestedDenom = String(value.denomination || value.unit || denom || "").toLowerCase();
+      if (typeof value.value === "number") return convertToCp(value.value, nestedDenom);
+      const parsedNested = parsePriceString(String(value.value));
+      if (parsedNested) return convertToCp(parsedNested.value, nestedDenom || parsedNested.denom);
+    }
+
+    // Support compendiums that store split currency values like {gp: 12, sp: 5}
+    const currencies = ["pp", "gp", "ep", "sp", "cp"];
+    let sumCp = 0;
+    let hasAny = false;
+    for (const cur of currencies) {
+      const raw = value[cur];
+      if (raw === null || raw === undefined || raw === "") continue;
+      let amount = null;
+      if (typeof raw === "number") {
+        amount = raw;
+      } else if (typeof raw === "string") {
+        amount = parseNumericPriceToken(raw);
+      }
+      if (!Number.isFinite(amount)) continue;
+      hasAny = true;
+      sumCp += convertToCp(amount, cur);
+    }
+    if (hasAny) return Math.round(sumCp);
+  }
   return null;
+}
+
+function parseNumericPriceToken(token) {
+  let raw = String(token || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, "")
+    .replace(/_/g, "")
+    .trim();
+  if (!raw) return Number.NaN;
+
+  const hasComma = raw.includes(",");
+  const hasDot = raw.includes(".");
+
+  if (hasComma && hasDot) {
+    // Assume the right-most separator is decimal, the rest are thousands.
+    if (raw.lastIndexOf(",") > raw.lastIndexOf(".")) {
+      raw = raw.replace(/\./g, "").replace(",", ".");
+    } else {
+      raw = raw.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    const decimalLike = /,\d{1,2}$/.test(raw);
+    if (decimalLike) raw = raw.replace(",", ".");
+    else raw = raw.replace(/,/g, "");
+  } else if (hasDot) {
+    const decimalLike = /\.\d{1,2}$/.test(raw);
+    const groupedThousands = /^\d{1,3}(?:\.\d{3})+$/.test(raw);
+    if (groupedThousands) {
+      raw = raw.replace(/\./g, "");
+    } else if (!decimalLike && raw.split(".").length > 2) {
+      raw = raw.replace(/\./g, "");
+    }
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
 /**
