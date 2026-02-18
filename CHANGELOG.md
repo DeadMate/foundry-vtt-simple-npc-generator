@@ -1,7 +1,9 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Fix generated NPC skill mapping so each skill keeps its correct ability from D&D5E config instead of defaulting to DEX (`Perception` now uses WIS as expected).
+- Reduce redundant Actors sidebar button refreshes by reacting only to mutations that actually touch the Actors sidebar root.
+- Debounce NPC dialog setting persistence and skip duplicate client-setting writes to reduce noisy repeated saves.
 
 ## 1.0.3
 - Add class signature/bonus-action feature lookup from compendiums for Rogue, Monk, Fighter, Barbarian, Paladin, and Ranger (with locale-aware name matching).

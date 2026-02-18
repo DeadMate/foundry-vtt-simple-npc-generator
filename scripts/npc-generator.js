@@ -1714,8 +1714,13 @@ export function buildBiography(npc) {
 export function buildSkillsData(skillIds, className) {
   const data = {};
   const skillConfig = CONFIG?.DND5E?.skills ?? {};
+  const validAbilities = new Set(["str", "dex", "con", "int", "wis", "cha"]);
   for (const key of Object.keys(skillConfig)) {
+    const configuredAbility = String(skillConfig?.[key]?.ability || "").toLowerCase();
     data[key] = { value: 0 };
+    if (validAbilities.has(configuredAbility)) {
+      data[key].ability = configuredAbility;
+    }
   }
   skillIds.forEach((skill) => {
     if (data[skill]) data[skill].value = 1;
