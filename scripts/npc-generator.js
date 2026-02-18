@@ -429,13 +429,6 @@ export async function buildActorData(npc, folderId = null) {
 
   normalizeArmorItems(items);
 
-  // Compute ability-based bonuses for NPC combat effectiveness
-  const primeAbility = npc.prime?.[0] || "str";
-  const primeScore = npc.abilities?.[primeAbility] || 10;
-  const primeMod = Math.floor((primeScore - 10) / 2);
-  const attackBonus = primeMod + npc.prof;
-  const saveDc = 8 + primeMod + npc.prof;
-
   // Saving throw proficiencies by class
   const saveProficiencies = getSavingThrowProficiencies(npc.className);
   const spellcastingAbility = getSpellcastingAbility(npc.className);
@@ -460,13 +453,6 @@ export async function buildActorData(npc, folderId = null) {
         movement: { walk: npc.speed },
         prof: npc.prof,
         spellcasting: spellcastingAbility || ""
-      },
-      bonuses: {
-        mwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
-        rwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
-        msak: { attack: `+${attackBonus}`, damage: "" },
-        rsak: { attack: `+${attackBonus}`, damage: "" },
-        spell: { dc: String(saveDc) }
       },
       details: {
         cr: npc.cr,
@@ -536,13 +522,6 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
 
   const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
 
-  // Compute ability-based bonuses for AI NPC
-  const primeAbility = npc.prime?.[0] || "str";
-  const primeScore = npc.abilities?.[primeAbility] || 10;
-  const primeMod = Math.floor((primeScore - 10) / 2);
-  const attackBonus = primeMod + npc.prof;
-  const saveDc = 8 + primeMod + npc.prof;
-
   const className = npc.className || "Fighter";
   const saveProficiencies = getSavingThrowProficiencies(className);
   const spellcastingAbility = getSpellcastingAbility(className);
@@ -567,13 +546,6 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
         movement: { walk: npc.speed },
         prof: npc.prof,
         spellcasting: spellcastingAbility || ""
-      },
-      bonuses: {
-        mwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
-        rwak: { attack: `+${attackBonus}`, damage: `+${primeMod}` },
-        msak: { attack: `+${attackBonus}`, damage: "" },
-        rsak: { attack: `+${attackBonus}`, damage: "" },
-        spell: { dc: String(saveDc) }
       },
       details: {
         cr: npc.cr,

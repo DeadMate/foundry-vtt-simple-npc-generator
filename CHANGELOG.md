@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Fix generated NPC actor data so attack/spell/DC values are no longer injected into `system.bonuses`; DnD5e sheet now computes them correctly from abilities/proficiency (prevents inflated attack modifiers and save DCs).
 - Fix generated NPC skill mapping so each skill keeps its correct ability from D&D5E config instead of defaulting to DEX (`Perception` now uses WIS as expected).
 - Reduce redundant Actors sidebar button refreshes by reacting only to mutations that actually touch the Actors sidebar root.
 - Debounce NPC dialog setting persistence and skip duplicate client-setting writes to reduce noisy repeated saves.
