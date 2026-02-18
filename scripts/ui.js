@@ -108,6 +108,20 @@ const UI_PROGRESS_UPDATE_MIN_MS = 80;
 const UI_PROGRESS_UPDATE_MIN_STEP = 2;
 const UI_BUILD_MAX_CONCURRENCY = 4;
 const UI_ACTOR_CREATE_BATCH_SIZE = 25;
+const UI_SETTINGS_PERSIST_DEBOUNCE_MS = 350;
+const UI_SETTINGS_LAST_WRITE = {
+  lastFolderId: null,
+  lastSpeciesKey: null,
+  lastNpcOptions: null
+};
+
+function setClientSettingIfChanged(key, value) {
+  if (!game.settings) return;
+  const nextValue = String(value || "");
+  if (UI_SETTINGS_LAST_WRITE[key] === nextValue) return;
+  UI_SETTINGS_LAST_WRITE[key] = nextValue;
+  game.settings.set(MODULE_ID, key, nextValue);
+}
 
 function displayProgressBarSafe(label, pct) {
   const text = String(label || "").trim();
@@ -296,7 +310,9 @@ export function getLastFolderId() {
   const stored = game.settings?.get(MODULE_ID, "lastFolderId");
   if (!stored) return "";
   const folder = game.folders?.get(stored);
-  return folder ? stored : "";
+  const resolved = folder ? stored : "";
+  UI_SETTINGS_LAST_WRITE.lastFolderId = resolved;
+  return resolved;
 }
 
 /**
@@ -304,8 +320,7 @@ export function getLastFolderId() {
  * @param {string} folderId - Folder ID
  */
 export function setLastFolderId(folderId) {
-  if (!game.settings) return;
-  game.settings.set(MODULE_ID, "lastFolderId", folderId || "");
+  setClientSettingIfChanged("lastFolderId", folderId || "");
 }
 
 /**
@@ -313,7 +328,9 @@ export function setLastFolderId(folderId) {
  * @returns {string}
  */
 export function getLastSpeciesKey() {
-  return game.settings?.get(MODULE_ID, "lastSpeciesKey") || "";
+  const value = game.settings?.get(MODULE_ID, "lastSpeciesKey") || "";
+  UI_SETTINGS_LAST_WRITE.lastSpeciesKey = String(value || "");
+  return value;
 }
 
 /**
@@ -321,8 +338,7 @@ export function getLastSpeciesKey() {
  * @param {string} value - Species key
  */
 export function setLastSpeciesKey(value) {
-  if (!game.settings) return;
-  game.settings.set(MODULE_ID, "lastSpeciesKey", value || "");
+  setClientSettingIfChanged("lastSpeciesKey", value || "");
 }
 
 /**
@@ -331,6 +347,7 @@ export function setLastSpeciesKey(value) {
  */
 export function getLastNpcOptions() {
   const raw = game.settings?.get(MODULE_ID, "lastNpcOptions");
+  UI_SETTINGS_LAST_WRITE.lastNpcOptions = String(raw || "");
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -345,12 +362,11 @@ export function getLastNpcOptions() {
  * @param {Object} options - Options object
  */
 export function setLastNpcOptions(options) {
-  if (!game.settings) return;
   try {
     const payload = options ? JSON.stringify(options) : "";
-    game.settings.set(MODULE_ID, "lastNpcOptions", payload);
+    setClientSettingIfChanged("lastNpcOptions", payload);
   } catch {
-    game.settings.set(MODULE_ID, "lastNpcOptions", "");
+    setClientSettingIfChanged("lastNpcOptions", "");
   }
 }
 
@@ -854,7 +870,7 @@ export async function openNpcDialog() {
         includeAiToken: !!includeAiTokenInput.prop("checked"),
         importantNpc: readChecked("importantNpc")
       });
-      const persistDialogOptions = () => {
+      const persistDialogOptionsNow = () => {
         setLastNpcOptions(collectDialogOptions());
         const activeMode = String(encounterModeInput.val() || "main");
         const selectedFolder = activeMode === "shop"
@@ -863,6 +879,24 @@ export async function openNpcDialog() {
         setLastFolderId(selectedFolder);
         const selectedSpecies = String(speciesSelect.val() || "random");
         setLastSpeciesKey(selectedSpecies !== "random" ? selectedSpecies : "");
+      };
+      let persistDialogOptionsTimeout = null;
+      const persistDialogOptions = (options = {}) => {
+        if (options?.immediate === true) {
+          if (persistDialogOptionsTimeout !== null) {
+            clearTimeout(persistDialogOptionsTimeout);
+            persistDialogOptionsTimeout = null;
+          }
+          persistDialogOptionsNow();
+          return;
+        }
+        if (persistDialogOptionsTimeout !== null) {
+          clearTimeout(persistDialogOptionsTimeout);
+        }
+        persistDialogOptionsTimeout = setTimeout(() => {
+          persistDialogOptionsTimeout = null;
+          persistDialogOptionsNow();
+        }, UI_SETTINGS_PERSIST_DEBOUNCE_MS);
       };
       tabButtons.on("click", (ev) => {
         const tab = ev.currentTarget.getAttribute("data-tab");
@@ -1173,7 +1207,7 @@ export async function openNpcDialog() {
       refreshEncounterCount();
       updateCreateLabel();
       updateAiUi();
-      persistDialogOptions();
+      persistDialogOptions({ immediate: true });
       }
     }).render(true);
   } catch (err) {
@@ -5162,4 +5196,3 @@ function parseStatsFromLooseText(rawText) {
   }
   return stats;
 }
-

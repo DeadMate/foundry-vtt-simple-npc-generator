@@ -7,6 +7,29 @@ let npcButtonObserver = null;
 let ensureButtonTimeout = null;
 let queuedEnsureContext = null;
 const ENSURE_BUTTON_DEBOUNCE_MS = 60;
+const ACTORS_ROOT_SELECTOR = ".sidebar-tab[data-tab='actors'], [data-tab='actors'], #actors, .sidebar-tab.actors, .tab.actors";
+
+function isActorsSidebarNode(node) {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+  const element = /** @type {Element} */ (node);
+  if (element.matches?.(ACTORS_ROOT_SELECTOR)) return true;
+  if (element.closest?.(ACTORS_ROOT_SELECTOR)) return true;
+  if (element.querySelector?.(ACTORS_ROOT_SELECTOR)) return true;
+  return false;
+}
+
+function mutationsTouchActorsSidebar(mutations) {
+  for (const mutation of mutations || []) {
+    if (isActorsSidebarNode(mutation?.target)) return true;
+    for (const addedNode of mutation?.addedNodes || []) {
+      if (isActorsSidebarNode(addedNode)) return true;
+    }
+    for (const removedNode of mutation?.removedNodes || []) {
+      if (isActorsSidebarNode(removedNode)) return true;
+    }
+  }
+  return false;
+}
 
 function scheduleEnsureNpcButton(contextHtml = null, options = {}) {
   if (contextHtml) queuedEnsureContext = contextHtml;
@@ -28,23 +51,25 @@ function ensureNpcButtonInActorsSidebar(contextHtml = null) {
     const $source = source?.jquery ? source : $(source);
     if (!$source?.length) return roots;
 
-    const rootSelector = ".sidebar-tab[data-tab='actors'], [data-tab='actors'], #actors, .sidebar-tab.actors, .tab.actors";
-    if ($source.is(rootSelector)) roots.push($source.first());
-    const nested = $source.find(rootSelector).toArray();
+    if ($source.is(ACTORS_ROOT_SELECTOR)) roots.push($source.first());
+    const nested = $source.find(ACTORS_ROOT_SELECTOR).toArray();
     for (const entry of nested) roots.push($(entry));
     return roots;
   };
 
   const targets = [];
-  for (const root of resolveActorsRoots(contextHtml)) targets.push(root);
+  const contextRoots = resolveActorsRoots(contextHtml);
+  for (const root of contextRoots) targets.push(root);
 
-  const globalCandidates = [
-    $("#sidebar"),
-    $("#sidebar .app.sidebar"),
-    $("#ui-right")
-  ];
-  for (const candidate of globalCandidates) {
-    for (const root of resolveActorsRoots(candidate)) targets.push(root);
+  if (!contextRoots.length) {
+    const globalCandidates = [
+      $("#sidebar"),
+      $("#sidebar .app.sidebar"),
+      $("#ui-right")
+    ];
+    for (const candidate of globalCandidates) {
+      for (const root of resolveActorsRoots(candidate)) targets.push(root);
+    }
   }
 
   const seen = new Set();
@@ -102,7 +127,8 @@ Hooks.once("ready", () => {
   if (!npcButtonObserver) {
     const sidebar = document.querySelector("#sidebar");
     if (sidebar && typeof MutationObserver !== "undefined") {
-      npcButtonObserver = new MutationObserver(() => {
+      npcButtonObserver = new MutationObserver((mutations) => {
+        if (!mutationsTouchActorsSidebar(mutations)) return;
         scheduleEnsureNpcButton();
       });
       npcButtonObserver.observe(sidebar, { childList: true, subtree: true });
@@ -129,10 +155,6 @@ Hooks.on("renderSidebarTab", (app, html) => {
     app?.tabName === "actors" ||
     app?.tab?.id === "actors";
   if (!isActorsTab) return;
-  scheduleEnsureNpcButton(html);
-});
-
-Hooks.on("renderSidebar", (app, html) => {
   scheduleEnsureNpcButton(html);
 });
 
