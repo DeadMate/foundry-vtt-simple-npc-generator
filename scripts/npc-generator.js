@@ -61,6 +61,11 @@ import { t } from "./i18n.js";
 const LOOKUP_CACHE_MAX_CLASS_KEYS = 128;
 const LOOKUP_CACHE_MAX_AI_INDEX_KEYS = 48;
 const AI_ITEM_RESOLVE_MAX_CONCURRENCY = 4;
+const ALL_ALIGNMENTS = [
+  "Lawful Good", "Neutral Good", "Chaotic Good",
+  "Lawful Neutral", "Neutral", "Chaotic Neutral",
+  "Lawful Evil", "Neutral Evil", "Chaotic Evil"
+];
 const NPC_GENERATOR_LOOKUP_CACHE = {
   source: null,
   spellPackNamesKey: "",
@@ -384,25 +389,10 @@ export function buildLoot(archetype, tier) {
  * @returns {Promise<Object>}
  */
 export async function buildActorData(npc, folderId = null) {
-  const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
-
-  const biography = buildBiography(npc);
-  const ALL_ALIGNMENTS = [
-    "Lawful Good", "Neutral Good", "Chaotic Good",
-    "Lawful Neutral", "Neutral", "Chaotic Neutral",
-    "Lawful Evil", "Neutral Evil", "Chaotic Evil"
-  ];
   const alignPool = npc.archetype?.alignmentPool;
   const alignment = Array.isArray(alignPool) && alignPool.length
     ? pickRandom(alignPool)
     : pickRandom(ALL_ALIGNMENTS);
-
-  const abilityData = {};
-  for (const [key, value] of Object.entries(npc.abilities)) {
-    abilityData[key] = { value };
-  }
-
-  const skillsData = buildSkillsData(npc.archetype.skills, npc.className);
 
   const items = [];
   const weaponItem = await buildWeaponItem(npc);
@@ -430,46 +420,14 @@ export async function buildActorData(npc, folderId = null) {
   normalizeArmorItems(items);
 
   // Saving throw proficiencies by class
-  const saveProficiencies = getSavingThrowProficiencies(npc.className);
-  const spellcastingAbility = getSpellcastingAbility(npc.className);
-
-  const actorData = {
-    name: npc.name,
-    type: "npc",
-    folder: folderId || undefined,
-    img: tokenImg,
-    prototypeToken: {
-      name: npc.name,
-      img: tokenImg,
-      displayName: 20,
-      disposition: 0
-    },
-    system: {
-      abilities: applyAbilitySaveProficiencies(abilityData, saveProficiencies),
-      skills: skillsData,
-      attributes: {
-        ac: { value: npc.ac },
-        hp: { value: npc.hp, max: npc.hp, temp: 0 },
-        movement: { walk: npc.speed },
-        prof: npc.prof,
-        spellcasting: spellcastingAbility || ""
-      },
-      details: {
-        cr: npc.cr,
-        alignment,
-        race: npc.race,
-        type: { value: "humanoid", subtype: "" },
-        biography: { value: biography },
-        spellLevel: npc.spellCasterLevel || 0
-      },
-      traits: {
-        size: "med",
-        languages: { value: [] }
-      },
-      currency: npc.loot ? npc.loot.coins : { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 }
-    },
-    items
-  };
+  const actorData = buildBaseActorDataPayload(npc, {
+    folderId,
+    items,
+    alignment,
+    currency: npc.loot ? npc.loot.coins : { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 },
+    spellLevel: npc.spellCasterLevel || 0,
+    abilityFallback: 10
+  });
 
   // Add spell slots for caster NPCs
   if (npc.archetype?.tags?.includes("caster")) {
@@ -504,29 +462,47 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
 
   normalizeArmorItems(items);
 
-  const biography = buildBiography(npc);
-  const AI_ALL_ALIGNMENTS = [
-    "Lawful Good", "Neutral Good", "Chaotic Good",
-    "Lawful Neutral", "Neutral", "Chaotic Neutral",
-    "Lawful Evil", "Neutral Evil", "Chaotic Evil"
-  ];
   const aiAlignPool = npc.archetype?.alignmentPool;
   const alignment = String(npc.alignment || "").trim() ||
-    (Array.isArray(aiAlignPool) && aiAlignPool.length ? pickRandom(aiAlignPool) : pickRandom(AI_ALL_ALIGNMENTS));
+    (Array.isArray(aiAlignPool) && aiAlignPool.length ? pickRandom(aiAlignPool) : pickRandom(ALL_ALIGNMENTS));
 
-  const abilityData = {};
-  for (const [key, value] of Object.entries(npc.abilities || {})) {
-    abilityData[key] = { value: Number(value) || 10 };
+  const actorData = buildBaseActorDataPayload(npc, {
+    folderId,
+    items,
+    alignment,
+    currency: npc.currency || { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 },
+    spellLevel: 0,
+    abilityFallback: 10
+  });
+
+  // Add spell slots if AI NPC is a caster
+  const isCasterAi = npc.archetypeTags?.includes("caster") || npc.archetype?.tags?.includes("caster");
+  if (isCasterAi) {
+    actorData.system.spells = buildSpellSlots(npc.tier, npc.importantNpc);
   }
-  const skillsData = buildSkillsData(npc.skillIds || npc.archetype.skills || [], npc.className);
+
+  return { actorData, resolvedItems, missingItems, matchDetails };
+}
+
+function buildBaseActorDataPayload(npc, options = {}) {
+  const folderId = options.folderId || null;
+  const items = Array.isArray(options.items) ? options.items : [];
+  const alignment = String(options.alignment || "").trim() || pickRandom(ALL_ALIGNMENTS);
+  const currency = options.currency && typeof options.currency === "object"
+    ? options.currency
+    : { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 };
+  const spellLevel = Number(options.spellLevel || 0);
+  const abilityFallback = Number(options.abilityFallback || 10) || 10;
 
   const tokenImg = String(npc?.tokenImg || "").trim() || getTokenImageForNpc(npc);
-
+  const biography = buildBiography(npc);
   const className = npc.className || "Fighter";
   const saveProficiencies = getSavingThrowProficiencies(className);
   const spellcastingAbility = getSpellcastingAbility(className);
+  const skillsData = buildSkillsData(npc.skillIds || npc.archetype?.skills || [], className);
+  const abilityData = buildAbilityValueData(npc?.abilities || {}, abilityFallback);
 
-  const actorData = {
+  return {
     name: npc.name,
     type: "npc",
     folder: folderId || undefined,
@@ -553,24 +529,25 @@ export async function buildActorDataFromAiBlueprint(blueprint, folderId = null, 
         race: npc.race,
         type: { value: "humanoid", subtype: "" },
         biography: { value: biography },
-        spellLevel: 0
+        spellLevel
       },
       traits: {
         size: "med",
         languages: { value: [] }
       },
-      currency: npc.currency || { pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 }
+      currency
     },
     items
   };
+}
 
-  // Add spell slots if AI NPC is a caster
-  const isCasterAi = npc.archetypeTags?.includes("caster") || npc.archetype?.tags?.includes("caster");
-  if (isCasterAi) {
-    actorData.system.spells = buildSpellSlots(npc.tier, npc.importantNpc);
+function buildAbilityValueData(rawAbilities, fallback = 10) {
+  const out = {};
+  for (const [key, value] of Object.entries(rawAbilities || {})) {
+    const num = Number(value);
+    out[key] = { value: Number.isFinite(num) ? num : fallback };
   }
-
-  return { actorData, resolvedItems, missingItems, matchDetails };
+  return out;
 }
 
 const KNOWN_CLASS_NAMES = {

@@ -8,6 +8,9 @@
 - Add explicit world setting `Allow custom OpenAI base URL (unsafe)` for trusted non-default OpenAI-compatible endpoints.
 - Improve OpenAI request reliability with a shared HTTP layer (timeout + bounded retries + exponential backoff/jitter) across chat and image flows.
 - Normalize OpenAI base URL parsing and path handling to keep endpoint construction consistent.
+- Refactor AI/NPC JSON import parsing into dedicated `scripts/import-parser.js`, reducing `ui.js` size and isolating loose-JSON normalization/validation logic.
+- Unify actor creation/apply-species flow through a shared UI pipeline to reduce duplicated create/import branches and keep notifications/progress behavior consistent.
+- Consolidate duplicated actor payload construction in `npc-generator.js` via a shared base builder used by both local and AI blueprint generation paths.
 
 ## 1.0.4
 - Fix generated NPC actor data so attack/spell/DC values are no longer injected into `system.bonuses`; DnD5e sheet now computes them correctly from abilities/proficiency (prevents inflated attack modifiers and save DCs).
