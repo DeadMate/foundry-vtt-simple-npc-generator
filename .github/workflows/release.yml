@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release:
     if: github.actor != 'github-actions[bot]'
@@ -27,7 +31,7 @@ jobs:
           fi
           CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" 2>/dev/null || echo "scripts/")
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -E "^(module\\.json|scripts/|data/|assets/|templates/|lang/)" >/dev/null; then
+          if echo "$CHANGED" | grep -E "^(module\\.json|CHANGELOG\\.md|scripts/|data/|assets/|templates/|lang/)" >/dev/null; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -133,7 +137,7 @@ jobs:
         env:
           FOUNDRY_RELEASE_TOKEN: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}
         run: |
-          curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
+          curl --fail-with-body -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
             -H "Content-Type: application/json" \
             -H "Authorization: ${FOUNDRY_RELEASE_TOKEN}" \
             -d @- <<'JSON'

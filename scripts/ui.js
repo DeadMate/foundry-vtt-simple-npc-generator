@@ -48,6 +48,7 @@ import {
   normalizeImportedBlueprints,
   validateAndNormalizeImportedBlueprint
 } from "./import-parser.js";
+import { runActorCreationPipeline } from "./actor-pipeline.js";
 
 function i18nText(key, fallback = "") {
   return t(key, fallback);
@@ -210,189 +211,15 @@ async function mapWithConcurrencyPreserveOrder(items, concurrency, worker, onSet
   return out;
 }
 
-function isActorDataPayload(value) {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function getActorCreateBatchSize(total) {
-  const count = Math.max(1, Number(total) || 1);
-  return Math.max(1, Math.min(UI_ACTOR_CREATE_BATCH_SIZE, count));
-}
-
-async function createActorsInBatches(actorDataList, { chunkSize = UI_ACTOR_CREATE_BATCH_SIZE, onProgress } = {}) {
-  const list = Array.isArray(actorDataList) ? actorDataList : [];
-  const indexed = [];
-  for (let index = 0; index < list.length; index++) {
-    if (!isActorDataPayload(list[index])) continue;
-    indexed.push({ index, actorData: list[index] });
-  }
-
-  const out = new Array(list.length).fill(null);
-  if (!indexed.length) {
-    return {
-      created: out,
-      createdCount: 0,
-      totalValid: 0,
-      skippedCount: list.length
-    };
-  }
-
-  const batchSize = Math.max(1, Math.min(50, Number(chunkSize) || UI_ACTOR_CREATE_BATCH_SIZE));
-  let createdCount = 0;
-  for (let start = 0; start < indexed.length; start += batchSize) {
-    const chunk = indexed.slice(start, start + batchSize);
-    const payload = chunk.map((entry) => entry.actorData);
-    let createdChunk = [];
-
-    if (typeof Actor.createDocuments === "function") {
-      try {
-        createdChunk = await Actor.createDocuments(payload);
-      } catch (err) {
-        console.warn("NPC Button: Batch Actor.createDocuments failed, falling back to per-actor create.", err);
-        createdChunk = await Promise.all(
-          payload.map(async (actorData) => {
-            try {
-              return await Actor.create(actorData);
-            } catch (createErr) {
-              console.warn("NPC Button: Actor.create failed for one entry.", createErr);
-              return null;
-            }
-          })
-        );
-      }
-    } else {
-      createdChunk = await Promise.all(
-        payload.map(async (actorData) => {
-          try {
-            return await Actor.create(actorData);
-          } catch (err) {
-            console.warn("NPC Button: Actor.create failed for one entry.", err);
-            return null;
-          }
-        })
-      );
-    }
-
-    for (let index = 0; index < chunk.length; index++) {
-      out[chunk[index].index] = createdChunk?.[index] || null;
-    }
-    createdCount += createdChunk.filter(Boolean).length;
-    if (typeof onProgress === "function") {
-      onProgress(Math.min(createdCount, indexed.length), indexed.length);
-    }
-  }
-
-  return {
-    created: out,
-    createdCount,
-    totalValid: indexed.length,
-    skippedCount: Math.max(0, list.length - indexed.length)
-  };
-}
-
-async function runActorCreationPipeline({
-  actorDataList,
-  speciesEntries = [],
-  createProgressLabel,
-  speciesProgressLabel,
-  skippedWarnKey = "ui.warnSkippedInvalidActorData",
-  skippedWarnFallback = "",
-  failedWarnKey = "ui.warnCreateNpcPartial",
-  failedWarnFallback = "",
-  speciesWarnKey = ""
-} = {}) {
-  const list = Array.isArray(actorDataList) ? actorDataList : [];
-  const speciesByIndex = Array.isArray(speciesEntries) ? speciesEntries : [];
-  const createProgress = createProgressReporter({
-    label: String(createProgressLabel || "").trim(),
-    total: list.filter((entry) => isActorDataPayload(entry)).length
-  });
-  const {
-    created,
-    createdCount,
-    skippedCount
-  } = await createActorsInBatches(list, {
-    chunkSize: getActorCreateBatchSize(list.length),
-    onProgress: (done) => createProgress.set(done)
-  });
-  createProgress.finish();
-  const createdActors = (created || []).filter(Boolean);
-
-  if (skippedCount) {
-    ui.notifications?.warn(
-      i18nFormat(
-        skippedWarnKey,
-        { count: skippedCount },
-        skippedWarnFallback
-      )
-    );
-  }
-  if (!createdActors.length) {
-    ui.notifications?.warn(i18nText("ui.warnNoActorsCreated", "No NPC actors were created."));
-    return {
-      created,
-      createdActors,
-      skippedCount,
-      failedCreateCount: Math.max(0, list.length - skippedCount - createdCount),
-      speciesApplyErrors: 0
-    };
-  }
-
-  const failedCreateCount = Math.max(0, list.length - skippedCount - createdCount);
-  if (failedCreateCount > 0) {
-    ui.notifications?.warn(
-      i18nFormat(
-        failedWarnKey,
-        { count: failedCreateCount },
-        failedWarnFallback
-      )
-    );
-  }
-
-  const pairs = list.map((_, index) => ({
-    actor: created?.[index] || null,
-    speciesEntry: speciesByIndex[index] || null
-  }));
-  const speciesTargets = pairs.filter((entry) => entry.actor && entry.speciesEntry);
-  const speciesProgress = createProgressReporter({
-    label: String(speciesProgressLabel || "").trim(),
-    total: speciesTargets.length
-  });
-  let speciesApplyErrors = 0;
-  for (const pair of speciesTargets) {
-    const actor = pair.actor;
-    const speciesEntry = pair.speciesEntry;
-    try {
-      const speciesItem = await buildSpeciesItem(speciesEntry);
-      if (!speciesItem) continue;
-      const createdItems = await actor.createEmbeddedDocuments("Item", [speciesItem]);
-      const createdItem = createdItems?.[0] || null;
-      if (!createdItem) continue;
-      await actor.update({ "system.details.race": createdItem.id });
-      await applySpeciesTraitsToActor(actor, createdItem);
-      await applySpeciesAdvancements(actor, createdItem);
-    } catch (err) {
-      speciesApplyErrors += 1;
-      console.warn(`NPC Button: Failed to apply species data for actor "${actor?.name || "Unknown"}".`, err);
-    } finally {
-      speciesProgress.tick();
-    }
-  }
-  speciesProgress.finish();
-
-  if (speciesWarnKey && speciesApplyErrors) {
-    ui.notifications?.warn(
-      i18nFormat(speciesWarnKey, { count: speciesApplyErrors })
-    );
-  }
-
-  return {
-    created,
-    createdActors,
-    skippedCount,
-    failedCreateCount,
-    speciesApplyErrors
-  };
+async function applySpeciesEntryToActor(actor, speciesEntry) {
+  const speciesItem = await buildSpeciesItem(speciesEntry);
+  if (!speciesItem) return;
+  const createdItems = await actor.createEmbeddedDocuments("Item", [speciesItem]);
+  const createdItem = createdItems?.[0] || null;
+  if (!createdItem) return;
+  await actor.update({ "system.details.race": createdItem.id });
+  await applySpeciesTraitsToActor(actor, createdItem);
+  await applySpeciesAdvancements(actor, createdItem);
 }
 
 /**
@@ -1710,7 +1537,13 @@ export async function createNpcFromForm(formData, options = {}) {
       speciesProgressLabel: i18nText("ui.progress.npcSpecies", "NPC: applying species data"),
       skippedWarnFallback: "Skipped {count} invalid NPC entries before actor creation.",
       failedWarnFallback: "Failed to create {count} NPC(s).",
-      speciesWarnKey: "ui.warnSpeciesApplyPartial"
+      speciesWarnKey: "ui.warnSpeciesApplyPartial",
+      preferredBatchSize: UI_ACTOR_CREATE_BATCH_SIZE,
+      createProgressReporter,
+      i18nText,
+      i18nFormat,
+      notifyWarn: (text) => ui.notifications?.warn(text),
+      applySpeciesToActor: applySpeciesEntryToActor
     });
     const createdActors = creationResult.createdActors;
     if (!createdActors.length) return;
@@ -4398,7 +4231,13 @@ async function importNpcFromChatGptJson(rawJson, { form, encounterModeInput, spe
     createProgressLabel: i18nText("ui.progress.importCreating", "Import: creating actors"),
     speciesProgressLabel: i18nText("ui.progress.importSpecies", "Import: applying species data"),
     skippedWarnFallback: "Skipped {count} invalid imported NPC entries before actor creation.",
-    failedWarnFallback: "Failed to create {count} imported NPC(s)."
+    failedWarnFallback: "Failed to create {count} imported NPC(s).",
+    preferredBatchSize: UI_ACTOR_CREATE_BATCH_SIZE,
+    createProgressReporter,
+    i18nText,
+    i18nFormat,
+    notifyWarn: (text) => ui.notifications?.warn(text),
+    applySpeciesToActor: applySpeciesEntryToActor
   });
   const createdActors = creationResult.createdActors;
   if (!createdActors.length) return;
