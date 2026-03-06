@@ -1,6 +1,7 @@
 /**
  * Import parsing and validation helpers for loose AI JSON payloads
  * @module import-parser
+ * Note: structural refactor module, behavior should stay equivalent.
  */
 
 import { t, tf } from "./i18n.js";
