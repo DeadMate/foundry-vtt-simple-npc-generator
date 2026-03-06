@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 1.0.5
 - Harden OpenAI endpoint handling: validate base URL format/protocol and block unsafe custom hosts by default to reduce API key exfiltration risk.
 - Add explicit world setting `Allow custom OpenAI base URL (unsafe)` for trusted non-default OpenAI-compatible endpoints.
 - Improve OpenAI request reliability with a shared HTTP layer (timeout + bounded retries + exponential backoff/jitter) across chat and image flows.
