@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 1.0.6
 - Refactor AI/NPC JSON import parsing into dedicated `scripts/import-parser.js`, reducing `ui.js` size and isolating loose-JSON normalization/validation logic.
 - Unify actor creation/apply-species flow through a shared UI pipeline to reduce duplicated create/import branches and keep notifications/progress behavior consistent.
 - Consolidate duplicated actor payload construction in `npc-generator.js` via a shared base builder used by both local and AI blueprint generation paths.
