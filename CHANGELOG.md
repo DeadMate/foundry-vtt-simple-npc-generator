@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- TODO: describe changes
+
+## 1.0.7
 - Move shared actor create/species-apply flow into dedicated `scripts/actor-pipeline.js` and keep UI wiring in `ui.js`.
 - Release workflow now treats `CHANGELOG.md` updates as release-relevant changes to avoid skipped release jobs on changelog-only commits.
 - Improve release pipeline safety with `concurrency` control and fail-fast Foundry publish (`curl --fail-with-body`).
