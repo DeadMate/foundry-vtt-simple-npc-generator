@@ -1,7 +1,10 @@
 # Changelog
 
 ## Unreleased
-- TODO: describe changes
+- Harden OpenAI endpoint handling: validate base URL format/protocol and block unsafe custom hosts by default to reduce API key exfiltration risk.
+- Add explicit world setting `Allow custom OpenAI base URL (unsafe)` for trusted non-default OpenAI-compatible endpoints.
+- Improve OpenAI request reliability with a shared HTTP layer (timeout + bounded retries + exponential backoff/jitter) across chat and image flows.
+- Normalize OpenAI base URL parsing and path handling to keep endpoint construction consistent.
 
 ## 1.0.4
 - Fix generated NPC actor data so attack/spell/DC values are no longer injected into `system.bonuses`; DnD5e sheet now computes them correctly from abilities/proficiency (prevents inflated attack modifiers and save DCs).

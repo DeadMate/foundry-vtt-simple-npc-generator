@@ -11,6 +11,11 @@ const OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-1-mini";
 const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_DEFAULT_MAX_BATCH = 3;
 const OPENAI_TIMEOUT_MS = 25000;
+const OPENAI_MAX_RETRIES = 2;
+const OPENAI_RETRY_BASE_DELAY_MS = 500;
+const OPENAI_RETRY_MAX_DELAY_MS = 4000;
+const OPENAI_RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const OPENAI_TRUSTED_BASE_URL_HOSTS = new Set(["api.openai.com"]);
 const AI_FULL_ATTACK_STYLES = ["melee", "ranged", "caster", "mixed"];
 const AI_FULL_TAGS = [
   "martial",
@@ -47,6 +52,7 @@ const SETTING_KEYS = {
   model: "openAiModel",
   imageModel: "openAiImageModel",
   baseUrl: "openAiBaseUrl",
+  allowCustomBaseUrl: "openAiAllowCustomBaseUrl",
   maxBatch: "openAiMaxBatch",
   apiKey: "openAiApiKey"
 };
@@ -142,6 +148,16 @@ export function registerOpenAiSettings() {
     default: OPENAI_DEFAULT_BASE_URL
   });
 
+  game.settings.register(MODULE_ID, SETTING_KEYS.allowCustomBaseUrl, {
+    name: "Allow custom OpenAI base URL (unsafe)",
+    hint: "Disabled by default for security. Enable only if you trust the endpoint because it will receive your API key.",
+    scope: "world",
+    config: true,
+    restricted: true,
+    type: Boolean,
+    default: false
+  });
+
   game.settings.register(MODULE_ID, SETTING_KEYS.maxBatch, {
     name: `${MODULE_ID}.settings.openAiMaxBatch.name`,
     hint: `${MODULE_ID}.settings.openAiMaxBatch.hint`,
@@ -204,6 +220,12 @@ export function getOpenAiMaxBatch() {
   return Math.max(1, Math.min(50, Number.isFinite(maxBatch) ? maxBatch : OPENAI_DEFAULT_MAX_BATCH));
 }
 
+function getOpenAiBaseUrl() {
+  const rawBaseUrl = String(game.settings?.get(MODULE_ID, SETTING_KEYS.baseUrl) || OPENAI_DEFAULT_BASE_URL);
+  const allowCustomBaseUrl = !!game.settings?.get(MODULE_ID, SETTING_KEYS.allowCustomBaseUrl);
+  return normalizeBaseUrl(rawBaseUrl, { allowCustomBaseUrl });
+}
+
 /**
  * Generate NPC flavor fields via OpenAI
  * @param {Object} npc - NPC generation object
@@ -221,9 +243,7 @@ export async function generateNpcFlavorWithOpenAi(npc) {
   }
 
   const model = String(game.settings?.get(MODULE_ID, SETTING_KEYS.model) || OPENAI_DEFAULT_MODEL).trim() || OPENAI_DEFAULT_MODEL;
-  const baseUrl = normalizeBaseUrl(
-    String(game.settings?.get(MODULE_ID, SETTING_KEYS.baseUrl) || OPENAI_DEFAULT_BASE_URL)
-  );
+  const baseUrl = getOpenAiBaseUrl();
   const endpoint = `${baseUrl}/chat/completions`;
 
   const language = getInterfaceLanguageContext();
@@ -238,56 +258,49 @@ export async function generateNpcFlavorWithOpenAi(npc) {
     "Do not use markdown. Do not add extra keys."
   ].join(" ");
 
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS) : null;
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`
+  };
 
-  try {
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
+  let feedbackIssues = [];
+  let previousFlavor = null;
+  let bestFlavor = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const userPrompt = buildFlavorPrompt(npc, {
+      attempt,
+      feedbackIssues,
+      previousFlavor
+    });
+    const requestData = {
+      model,
+      temperature: attempt === 0 ? 0.65 : 0.45,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ]
     };
 
-    let feedbackIssues = [];
-    let previousFlavor = null;
-    let bestFlavor = null;
-
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const userPrompt = buildFlavorPrompt(npc, {
-        attempt,
-        feedbackIssues,
-        previousFlavor
-      });
-      const requestData = {
-        model,
-        temperature: attempt === 0 ? 0.65 : 0.45,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
-      };
-
-      const content = await requestOpenAiChatCompletion(endpoint, headers, requestData, controller?.signal);
-      if (!content) {
-        throw new Error(t("openai.errorEmptyResponse"));
-      }
-
-      const parsed = parseJsonContent(content);
-      const normalized = normalizeAiFlavor(parsed, npc);
-      bestFlavor = normalized;
-
-      const issues = evaluateFlavorQuality(normalized, npc);
-      if (!issues.length) return normalized;
-
-      feedbackIssues = issues;
-      previousFlavor = normalized;
+    const content = await requestOpenAiChatCompletion(endpoint, headers, requestData);
+    if (!content) {
+      throw new Error(t("openai.errorEmptyResponse"));
     }
 
-    if (bestFlavor) return bestFlavor;
-    throw new Error(t("openai.errorFlavorValidationFailed"));
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    const parsed = parseJsonContent(content);
+    const normalized = normalizeAiFlavor(parsed, npc);
+    bestFlavor = normalized;
+
+    const issues = evaluateFlavorQuality(normalized, npc);
+    if (!issues.length) return normalized;
+
+    feedbackIssues = issues;
+    previousFlavor = normalized;
   }
+
+  if (bestFlavor) return bestFlavor;
+  throw new Error(t("openai.errorFlavorValidationFailed"));
 }
 
 /**
@@ -306,9 +319,7 @@ export async function generateFullNpcWithOpenAi(context = {}) {
   }
 
   const model = String(game.settings?.get(MODULE_ID, SETTING_KEYS.model) || OPENAI_DEFAULT_MODEL).trim() || OPENAI_DEFAULT_MODEL;
-  const baseUrl = normalizeBaseUrl(
-    String(game.settings?.get(MODULE_ID, SETTING_KEYS.baseUrl) || OPENAI_DEFAULT_BASE_URL)
-  );
+  const baseUrl = getOpenAiBaseUrl();
   const endpoint = `${baseUrl}/chat/completions`;
 
   const language = getInterfaceLanguageContext();
@@ -440,9 +451,7 @@ export async function generateQuestBoardWithOpenAi(context = {}) {
   }
 
   const model = String(game.settings?.get(MODULE_ID, SETTING_KEYS.model) || OPENAI_DEFAULT_MODEL).trim() || OPENAI_DEFAULT_MODEL;
-  const baseUrl = normalizeBaseUrl(
-    String(game.settings?.get(MODULE_ID, SETTING_KEYS.baseUrl) || OPENAI_DEFAULT_BASE_URL)
-  );
+  const baseUrl = getOpenAiBaseUrl();
   const endpoint = `${baseUrl}/chat/completions`;
 
   const language = getInterfaceLanguageContext();
@@ -509,9 +518,7 @@ export async function generateNpcTokenImageWithOpenAi(npc) {
   const model =
     String(game.settings?.get(MODULE_ID, SETTING_KEYS.imageModel) || OPENAI_DEFAULT_IMAGE_MODEL).trim() ||
     OPENAI_DEFAULT_IMAGE_MODEL;
-  const baseUrl = normalizeBaseUrl(
-    String(game.settings?.get(MODULE_ID, SETTING_KEYS.baseUrl) || OPENAI_DEFAULT_BASE_URL)
-  );
+  const baseUrl = getOpenAiBaseUrl();
   const endpoint = `${baseUrl}/images/generations`;
 
   const headers = {
@@ -1331,11 +1338,19 @@ function sanitizePathSegment(value) {
 }
 
 async function requestOpenAiImageGeneration(endpoint, headers, requestData) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(requestData)
-  });
+  const response = await fetchWithTimeoutRetry(
+    endpoint,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestData)
+    },
+    {
+      timeoutMs: OPENAI_TIMEOUT_MS,
+      maxRetries: OPENAI_MAX_RETRIES,
+      errorLabel: t("openai.errorImageRequestFailed")
+    }
+  );
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
@@ -1357,7 +1372,15 @@ async function imagePayloadToFile(imagePayload, fileName) {
   const url = String(imagePayload?.url || "").trim();
   if (!url) return null;
 
-  const response = await fetch(url);
+  const response = await fetchWithTimeoutRetry(
+    url,
+    { method: "GET" },
+    {
+      timeoutMs: OPENAI_TIMEOUT_MS,
+      maxRetries: 1,
+      errorLabel: t("openai.errorDownloadGeneratedImage")
+    }
+  );
   if (!response.ok) {
     throw new Error(`${t("openai.errorDownloadGeneratedImage")}: ${response.status}`);
   }
@@ -1402,9 +1425,41 @@ async function ensureDataDirectory(path) {
   }
 }
 
-function normalizeBaseUrl(baseUrl) {
+function normalizeBaseUrl(baseUrl, options = {}) {
   const clean = String(baseUrl || "").trim() || OPENAI_DEFAULT_BASE_URL;
-  return clean.replace(/\/+$/, "");
+  let parsed = null;
+  try {
+    parsed = new URL(clean);
+  } catch {
+    throw new Error(
+      t("openai.errorInvalidBaseUrl", "Invalid OpenAI base URL. Use a full URL like https://api.openai.com/v1.")
+    );
+  }
+
+  const protocol = String(parsed.protocol || "").toLowerCase();
+  const host = String(parsed.hostname || "").toLowerCase();
+  const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  if (protocol !== "https:" && !(isLoopback && protocol === "http:")) {
+    throw new Error(
+      t("openai.errorInsecureBaseUrl", "OpenAI base URL must use HTTPS (HTTP is allowed only for localhost).")
+    );
+  }
+
+  const allowCustomBaseUrl = options.allowCustomBaseUrl === true;
+  if (!OPENAI_TRUSTED_BASE_URL_HOSTS.has(host) && !allowCustomBaseUrl) {
+    throw new Error(
+      t(
+        "openai.errorUnsafeCustomBaseUrl",
+        "Custom OpenAI base URL is blocked to protect your API key. Enable the unsafe custom endpoint setting only if you trust the endpoint."
+      )
+    );
+  }
+
+  parsed.hash = "";
+  parsed.search = "";
+  let path = String(parsed.pathname || "").replace(/\/+$/, "");
+  if (!path || path === "/") path = "/v1";
+  return `${parsed.origin}${path}`;
 }
 
 function getInterfaceLanguageContext() {
@@ -1687,12 +1742,20 @@ function cleanErrorText(rawError) {
 }
 
 async function requestOpenAiChatCompletion(endpoint, headers, requestData, signal) {
-  const firstResponse = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(requestData),
-    signal
-  });
+  const firstResponse = await fetchWithTimeoutRetry(
+    endpoint,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestData),
+      signal
+    },
+    {
+      timeoutMs: OPENAI_TIMEOUT_MS,
+      maxRetries: OPENAI_MAX_RETRIES,
+      errorLabel: t("openai.errorRequestFailed")
+    }
+  );
   if (firstResponse.ok) {
     const payload = await firstResponse.json();
     return String(payload?.choices?.[0]?.message?.content || "").trim();
@@ -1713,12 +1776,20 @@ async function requestOpenAiChatCompletion(endpoint, headers, requestData, signa
       ]
     };
     delete fallbackData.response_format;
-    const secondResponse = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(fallbackData),
-      signal
-    });
+    const secondResponse = await fetchWithTimeoutRetry(
+      endpoint,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(fallbackData),
+        signal
+      },
+      {
+        timeoutMs: OPENAI_TIMEOUT_MS,
+        maxRetries: OPENAI_MAX_RETRIES,
+        errorLabel: t("openai.errorRequestFailed")
+      }
+    );
     if (secondResponse.ok) {
       const payload = await secondResponse.json();
       return String(payload?.choices?.[0]?.message?.content || "").trim();
@@ -1730,4 +1801,102 @@ async function requestOpenAiChatCompletion(endpoint, headers, requestData, signa
 
   const reason = firstErrReason || firstResponse.statusText || t("openai.errorRequestFailed");
   throw new Error(`${firstResponse.status}: ${reason}`);
+}
+
+async function fetchWithTimeoutRetry(url, requestInit = {}, options = {}) {
+  const timeoutMs = clampNumber(options.timeoutMs, 1000, 120000, OPENAI_TIMEOUT_MS);
+  const maxRetries = clampNumber(options.maxRetries, 0, 5, OPENAI_MAX_RETRIES);
+  const errorLabel = String(options.errorLabel || t("openai.errorRequestFailed"));
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const timeoutState = { timedOut: false };
+    const { signal, cleanup } = createRequestSignalWithTimeout(timeoutMs, requestInit.signal, timeoutState);
+    try {
+      const response = await fetch(url, {
+        ...requestInit,
+        signal
+      });
+      if (OPENAI_RETRYABLE_STATUSES.has(response.status) && attempt < maxRetries) {
+        await consumeResponseSafely(response);
+        await delay(getRetryDelayMs(attempt));
+        continue;
+      }
+      return response;
+    } catch (err) {
+      const abortedByCaller = requestInit.signal?.aborted === true;
+      const timeoutAbort = String(err?.name || "") === "AbortError" && timeoutState.timedOut;
+      const retryableNetworkError = !abortedByCaller && (timeoutAbort || isTransientFetchError(err));
+      if (retryableNetworkError && attempt < maxRetries) {
+        await delay(getRetryDelayMs(attempt));
+        continue;
+      }
+      if (timeoutAbort) {
+        throw new Error(`${errorLabel}: ${t("openai.errorRequestTimeout", "request timed out")}`);
+      }
+      throw err;
+    } finally {
+      cleanup();
+    }
+  }
+  throw new Error(errorLabel);
+}
+
+function createRequestSignalWithTimeout(timeoutMs, externalSignal, timeoutState) {
+  if (typeof AbortController === "undefined") {
+    return {
+      signal: externalSignal || undefined,
+      cleanup: () => {}
+    };
+  }
+
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort(externalSignal.reason);
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => {
+    timeoutState.timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      externalSignal?.removeEventListener?.("abort", onExternalAbort);
+    }
+  };
+}
+
+function isTransientFetchError(err) {
+  const name = String(err?.name || "");
+  if (name === "TypeError") return true;
+  const message = String(err?.message || "").toLowerCase();
+  return (
+    message.includes("failed to fetch") ||
+    message.includes("network") ||
+    message.includes("socket") ||
+    message.includes("econnreset") ||
+    message.includes("timed out")
+  );
+}
+
+function getRetryDelayMs(attempt) {
+  const base = OPENAI_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt);
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.min(OPENAI_RETRY_MAX_DELAY_MS, base + jitter);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function consumeResponseSafely(response) {
+  try {
+    await response.text();
+  } catch {
+    // no-op
+  }
 }
